@@ -143,6 +143,7 @@
   .touch-btn {
     position: absolute;
     pointer-events: auto;
+    touch-action: none;
     border-radius: 50%;
     display: flex;
     justify-content: center;
@@ -261,10 +262,55 @@ if (isMobile) {
   document.querySelector('.mobile-hint').style.display = 'block';
 }
 
-// Prevent all default touch behaviors on iOS
-document.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
-document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
-document.addEventListener('touchend', e => e.preventDefault(), { passive: false });
+// Prevent all default touch behaviors on iOS + handle drag at document level
+// (drag-zone element approach was unreliable on iOS Safari)
+document.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (gameState !== 'playing') return;
+  for (const t of e.changedTouches) {
+    if (touch.btnIds.has(t.identifier)) continue;
+    if (touch.dragId === null) {
+      touch.dragId = t.identifier;
+      touch.active = true;
+      touch.lastX = t.clientX;
+      touch.lastY = t.clientY;
+      touch.dx = 0;
+      touch.dy = 0;
+    }
+  }
+}, { passive: false });
+document.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === touch.dragId) {
+      touch.dx += screenToGame(t.clientX - touch.lastX);
+      touch.dy += screenToGame(t.clientY - touch.lastY);
+      touch.lastX = t.clientX;
+      touch.lastY = t.clientY;
+    }
+  }
+}, { passive: false });
+document.addEventListener('touchend', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === touch.dragId) {
+      touch.dragId = null;
+      touch.active = false;
+      touch.dx = 0;
+      touch.dy = 0;
+    }
+  }
+}, { passive: false });
+document.addEventListener('touchcancel', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === touch.dragId) {
+      touch.dragId = null;
+      touch.active = false;
+      touch.dx = 0;
+      touch.dy = 0;
+    }
+  }
+});
 document.addEventListener('gesturestart', e => e.preventDefault(), { passive: false });
 document.addEventListener('gesturechange', e => e.preventDefault(), { passive: false });
 document.addEventListener('gestureend', e => e.preventDefault(), { passive: false });
@@ -581,44 +627,8 @@ function screenToGame(screenPx) {
   return screenPx / (canvas._scale || 1);
 }
 
-dragZone.addEventListener('touchstart', e => {
-  if (gameState !== 'playing') return;
-  for (const t of e.changedTouches) {
-    if (touch.btnIds.has(t.identifier)) continue;
-    if (touch.dragId === null) {
-      touch.dragId = t.identifier;
-      touch.active = true;
-      touch.lastX = t.clientX;
-      touch.lastY = t.clientY;
-      touch.dx = 0;
-      touch.dy = 0;
-    }
-  }
-}, { passive: true });
-
-dragZone.addEventListener('touchmove', e => {
-  for (const t of e.changedTouches) {
-    if (t.identifier === touch.dragId) {
-      touch.dx += screenToGame(t.clientX - touch.lastX);
-      touch.dy += screenToGame(t.clientY - touch.lastY);
-      touch.lastX = t.clientX;
-      touch.lastY = t.clientY;
-    }
-  }
-}, { passive: true });
-
-function endDrag(e) {
-  for (const t of e.changedTouches) {
-    if (t.identifier === touch.dragId) {
-      touch.dragId = null;
-      touch.active = false;
-      touch.dx = 0;
-      touch.dy = 0;
-    }
-  }
-}
-dragZone.addEventListener('touchend', endDrag, { passive: true });
-dragZone.addEventListener('touchcancel', endDrag, { passive: true });
+// Drag is now handled at document level (see above).
+// Buttons use stopPropagation so their touches don't become drags.
 
 btnFocus.addEventListener('touchstart', e => {
   e.stopPropagation();
