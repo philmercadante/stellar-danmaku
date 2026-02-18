@@ -213,7 +213,7 @@
 <div id="title-screen">
   <h1>STELLAR DANMAKU</h1>
   <div class="subtitle">G A L A G A &nbsp; x &nbsp; T O U H O U</div>
-  <div class="prompt">[ TAP OR PRESS ENTER TO START ]</div>
+  <div class="prompt">[ TAP OR PRESS ENTER TO SELECT SHIP ]</div>
   <div class="controls desktop-controls">
     <span>WASD / ARROWS</span> — Move<br>
     <span>SPACE / Z</span> — Shoot<br>
@@ -349,6 +349,19 @@ const ASSET_PATHS = {
   // Shields
   shield1: 'assets/kenney/PNG/Effects/shield1.png',
   shield2: 'assets/kenney/PNG/Effects/shield2.png',
+
+  // Kenney player ships (Tempest & Bastion)
+  ship2Base: 'assets/kenney/PNG/playerShip2_red.png',
+  ship2Dmg1: 'assets/kenney/PNG/Damage/playerShip2_damage1.png',
+  ship2Dmg2: 'assets/kenney/PNG/Damage/playerShip2_damage2.png',
+  ship2Dmg3: 'assets/kenney/PNG/Damage/playerShip2_damage3.png',
+  ship3Base: 'assets/kenney/PNG/playerShip3_green.png',
+  ship3Dmg1: 'assets/kenney/PNG/Damage/playerShip3_damage1.png',
+  ship3Dmg2: 'assets/kenney/PNG/Damage/playerShip3_damage2.png',
+  ship3Dmg3: 'assets/kenney/PNG/Damage/playerShip3_damage3.png',
+
+  // Foozle invincibility shield (for Bastion bubble bomb)
+  shieldInvinc: `${FOOZLE}/Main Ship/Main Ship - Shields/PNGs/Main Ship - Shields - Invincibility Shield.png`,
 };
 
 const img = {};  // loaded Image objects
@@ -387,6 +400,53 @@ function loadAllAssets() {
   });
 }
 
+// ---- SHIP CONFIGURATIONS ----
+const SHIP_CONFIGS = [
+  {
+    name: 'VANGUARD',
+    subtitle: 'BALANCED',
+    hp: 5, maxHp: 5, bombs: 3,
+    speed: 5, focusSpeed: 2.2,
+    hitboxRadius: 3,
+    shootDelay: 5,
+    color: '#7b68ee',
+    drawType: 'foozle',
+    desc: ['Versatile all-rounder.', 'Spread shot + full-clear bomb.'],
+    stats: { hp: 3, spd: 3, pwr: 3, bmb: 3 }, // 1-5 for display bars
+  },
+  {
+    name: 'TEMPEST',
+    subtitle: 'GLASS CANNON',
+    hp: 3, maxHp: 3, bombs: 5,
+    speed: 6, focusSpeed: 2.5,
+    hitboxRadius: 2.5,
+    shootDelay: 3,
+    color: '#ff4466',
+    drawType: 'kenney2',
+    baseSprite: 'ship2Base',
+    dmgSprites: ['ship2Dmg1', 'ship2Dmg2', 'ship2Dmg3'],
+    desc: ['Fast and fragile.', 'Rapid beam + cone bomb.'],
+    stats: { hp: 1, spd: 5, pwr: 5, bmb: 4 },
+  },
+  {
+    name: 'BASTION',
+    subtitle: 'TANK',
+    hp: 8, maxHp: 8, bombs: 2,
+    speed: 4, focusSpeed: 1.8,
+    hitboxRadius: 4,
+    shootDelay: 6,
+    color: '#44ff88',
+    drawType: 'kenney3',
+    baseSprite: 'ship3Base',
+    dmgSprites: ['ship3Dmg1', 'ship3Dmg2', 'ship3Dmg3'],
+    desc: ['Slow but tough.', 'Wide spread + shield bubble.'],
+    stats: { hp: 5, spd: 1, pwr: 2, bmb: 2 },
+  },
+];
+
+let selectedShip = 0;
+let selectAnim = 0; // animation timer for select screen
+
 // ---- GAME STATE ----
 let gameState = 'loading';
 let score = 0;
@@ -404,18 +464,61 @@ const keys = {};
 window.addEventListener('keydown', e => {
   keys[e.key.toLowerCase()] = true;
   if (e.key === 'Enter') {
-    if (gameState === 'title') startGame();
-    else if (gameState === 'gameover') startGame();
+    if (gameState === 'title') showSelectScreen();
+    else if (gameState === 'select') startGame();
+    else if (gameState === 'gameover') showSelectScreen();
+  }
+  if (gameState === 'select') {
+    if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') {
+      selectedShip = (selectedShip + SHIP_CONFIGS.length - 1) % SHIP_CONFIGS.length;
+    }
+    if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') {
+      selectedShip = (selectedShip + 1) % SHIP_CONFIGS.length;
+    }
   }
   if (e.key !== 'F5' && e.key !== 'F12') e.preventDefault();
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 
-function handleTapStart(e) {
-  if (gameState === 'title') startGame();
-  else if (gameState === 'gameover') startGame();
+function showSelectScreen() {
+  document.getElementById('title-screen').style.display = 'none';
+  document.getElementById('game-over').style.display = 'none';
+  gameState = 'select';
+  selectAnim = 0;
 }
-canvas.addEventListener('click', handleTapStart);
+
+function handleTapStart(e) {
+  if (gameState === 'title') showSelectScreen();
+  else if (gameState === 'gameover') showSelectScreen();
+}
+
+function handleSelectTap(e) {
+  if (gameState !== 'select') return;
+  const rect = canvas.getBoundingClientRect();
+  const scale = canvas._scale || 1;
+  const cx = (e.clientX - rect.left) / scale;
+  const cy = (e.clientY - rect.top) / scale;
+  // Ship panels: 3 panels across the width
+  const panelW = W / 3;
+  if (cy > 180 && cy < 550) {
+    const tapped = Math.floor(cx / panelW);
+    if (tapped >= 0 && tapped < 3) {
+      if (tapped === selectedShip) {
+        startGame(); // tap selected ship to confirm
+      } else {
+        selectedShip = tapped;
+      }
+    }
+  }
+  // Confirm button area at bottom
+  if (cy > 600 && cy < 680) {
+    startGame();
+  }
+}
+canvas.addEventListener('click', (e) => {
+  handleTapStart(e);
+  handleSelectTap(e);
+});
 document.getElementById('title-screen').addEventListener('click', handleTapStart);
 document.getElementById('title-screen').addEventListener('touchend', handleTapStart);
 document.getElementById('game-over').addEventListener('click', handleTapStart);
@@ -668,29 +771,11 @@ function isFocused() {
   return keys['shift'] || touch.focus;
 }
 
-// ---- PLAYER SHOOTING ----
+// ---- PLAYER SHOOTING (dispatches to ship-specific) ----
 function playerShoot() {
-  const focused = isFocused();
-  const p = player;
-  const pw = p.power;
-
-  playerBullets.push({ x: p.x, y: p.y - 16, vx: 0, vy: -12, damage: 2, size: 3, color: COLORS.playerShot, type: 'main' });
-
-  if (pw >= 2) {
-    playerBullets.push({ x: p.x - 10, y: p.y - 10, vx: focused ? -0.5 : -2, vy: -11, damage: 1.5, size: 2.5, color: '#88ddff', type: 'side' });
-    playerBullets.push({ x: p.x + 10, y: p.y - 10, vx: focused ? 0.5 : 2, vy: -11, damage: 1.5, size: 2.5, color: '#88ddff', type: 'side' });
-  }
-  if (pw >= 3) {
-    playerBullets.push({ x: p.x - 18, y: p.y - 5, vx: focused ? -1 : -3.5, vy: -10, damage: 1, size: 2, color: '#aaccff', type: 'wide' });
-    playerBullets.push({ x: p.x + 18, y: p.y - 5, vx: focused ? 1 : 3.5, vy: -10, damage: 1, size: 2, color: '#aaccff', type: 'wide' });
-  }
-  if (pw >= 4) {
-    for (const opt of player.options) {
-      let target = findNearestEnemy(opt.x, opt.y);
-      let angle = target ? angleToward(opt, target) : -Math.PI / 2;
-      playerBullets.push({ x: opt.x, y: opt.y, vx: Math.cos(angle) * 9, vy: Math.sin(angle) * 9, damage: 1.5, size: 2, color: '#ff88ff', type: 'homing' });
-    }
-  }
+  if (selectedShip === 0) playerShootVanguard();
+  else if (selectedShip === 1) playerShootTempest();
+  else playerShootBastion();
 }
 
 function findNearestEnemy(x, y) {
@@ -708,27 +793,167 @@ function findNearestEnemy(x, y) {
 
 // ---- BOMBS ----
 let bombCooldown = 0;
-function useBomb() {
-  if (player.bombs <= 0 || !player.alive || bombCooldown > 0) return;
+let shieldBombActive = false;
+let shieldBombTimer = 0;
+let shieldBombRadius = 60;
+
+// ---- SHIP-SPECIFIC SHOOTING ----
+function playerShootVanguard() {
+  const focused = isFocused();
+  const p = player;
+  const pw = p.power;
+  playerBullets.push({ x: p.x, y: p.y - 16, vx: 0, vy: -12, damage: 2, size: 3, color: COLORS.playerShot, type: 'main' });
+  if (pw >= 2) {
+    playerBullets.push({ x: p.x - 10, y: p.y - 10, vx: focused ? -0.5 : -2, vy: -11, damage: 1.5, size: 2.5, color: '#88ddff', type: 'side' });
+    playerBullets.push({ x: p.x + 10, y: p.y - 10, vx: focused ? 0.5 : 2, vy: -11, damage: 1.5, size: 2.5, color: '#88ddff', type: 'side' });
+  }
+  if (pw >= 3) {
+    playerBullets.push({ x: p.x - 18, y: p.y - 5, vx: focused ? -1 : -3.5, vy: -10, damage: 1, size: 2, color: '#aaccff', type: 'wide' });
+    playerBullets.push({ x: p.x + 18, y: p.y - 5, vx: focused ? 1 : 3.5, vy: -10, damage: 1, size: 2, color: '#aaccff', type: 'wide' });
+  }
+  if (pw >= 4) {
+    for (const opt of player.options) {
+      let target = findNearestEnemy(opt.x, opt.y);
+      let angle = target ? angleToward(opt, target) : -Math.PI / 2;
+      playerBullets.push({ x: opt.x, y: opt.y, vx: Math.cos(angle) * 9, vy: Math.sin(angle) * 9, damage: 1.5, size: 2, color: '#ff88ff', type: 'homing' });
+    }
+  }
+}
+
+function playerShootTempest() {
+  const focused = isFocused();
+  const p = player;
+  const pw = p.power;
+  // Rapid narrow beam — higher damage, tighter pattern
+  playerBullets.push({ x: p.x, y: p.y - 16, vx: 0, vy: -14, damage: 3, size: 3.5, color: '#ff6666', type: 'main' });
+  if (pw >= 2) {
+    playerBullets.push({ x: p.x - 5, y: p.y - 14, vx: focused ? 0 : -0.8, vy: -13, damage: 2.5, size: 2.5, color: '#ff8888', type: 'side' });
+    playerBullets.push({ x: p.x + 5, y: p.y - 14, vx: focused ? 0 : 0.8, vy: -13, damage: 2.5, size: 2.5, color: '#ff8888', type: 'side' });
+  }
+  if (pw >= 3) {
+    playerBullets.push({ x: p.x - 8, y: p.y - 12, vx: focused ? 0 : -1.2, vy: -13, damage: 2, size: 2, color: '#ffaaaa', type: 'wide' });
+    playerBullets.push({ x: p.x + 8, y: p.y - 12, vx: focused ? 0 : 1.2, vy: -13, damage: 2, size: 2, color: '#ffaaaa', type: 'wide' });
+  }
+  if (pw >= 4) {
+    // Piercing shots instead of homing — straight ahead, high damage
+    playerBullets.push({ x: p.x - 3, y: p.y - 18, vx: 0, vy: -15, damage: 4, size: 4, color: '#ff4444', type: 'main', pierce: true });
+    playerBullets.push({ x: p.x + 3, y: p.y - 18, vx: 0, vy: -15, damage: 4, size: 4, color: '#ff4444', type: 'main', pierce: true });
+  }
+}
+
+function playerShootBastion() {
+  const focused = isFocused();
+  const p = player;
+  const pw = p.power;
+  // Wide spread — more streams, lower per-bullet damage
+  playerBullets.push({ x: p.x, y: p.y - 16, vx: 0, vy: -10, damage: 1.5, size: 3, color: '#44ff88', type: 'main' });
+  playerBullets.push({ x: p.x - 8, y: p.y - 12, vx: focused ? -0.5 : -2, vy: -10, damage: 1, size: 2, color: '#66ffaa', type: 'side' });
+  playerBullets.push({ x: p.x + 8, y: p.y - 12, vx: focused ? 0.5 : 2, vy: -10, damage: 1, size: 2, color: '#66ffaa', type: 'side' });
+  if (pw >= 2) {
+    playerBullets.push({ x: p.x - 16, y: p.y - 8, vx: focused ? -1 : -3.5, vy: -9, damage: 1, size: 2, color: '#88ffcc', type: 'wide' });
+    playerBullets.push({ x: p.x + 16, y: p.y - 8, vx: focused ? 1 : 3.5, vy: -9, damage: 1, size: 2, color: '#88ffcc', type: 'wide' });
+  }
+  if (pw >= 3) {
+    playerBullets.push({ x: p.x - 22, y: p.y - 4, vx: focused ? -1.5 : -5, vy: -8, damage: 0.8, size: 2, color: '#aaffdd', type: 'wide' });
+    playerBullets.push({ x: p.x + 22, y: p.y - 4, vx: focused ? 1.5 : 5, vy: -8, damage: 0.8, size: 2, color: '#aaffdd', type: 'wide' });
+  }
+  if (pw >= 4) {
+    // 3 option pods instead of 2
+    for (const opt of player.options) {
+      let target = findNearestEnemy(opt.x, opt.y);
+      let angle = target ? angleToward(opt, target) : -Math.PI / 2;
+      playerBullets.push({ x: opt.x, y: opt.y, vx: Math.cos(angle) * 8, vy: Math.sin(angle) * 8, damage: 1, size: 2, color: '#88ff88', type: 'homing' });
+    }
+  }
+}
+
+// ---- SHIP-SPECIFIC BOMBS ----
+function useBombVanguard() {
+  // Full-screen clear (original behavior)
   player.bombs--;
   player.invincible = 120;
   bombCooldown = 30;
-  shakeTimer = 20;
-  shakeIntensity = 8;
-  slowmoTimer = 30;
-
+  shakeTimer = 20; shakeIntensity = 8; slowmoTimer = 30;
   for (const b of enemyBullets) {
     spawnParticles(b.x, b.y, b.color || '#ffffff', 3, 2, 15, 2);
     score += 10;
   }
   enemyBullets = [];
-
   for (const e of enemies) { e.hp -= 20; }
   for (const b of bosses) { b.hp -= 30; }
-
   spawnParticles(player.x, player.y, '#ffffff', 60, 10, 40, 5);
   spawnParticles(player.x, player.y, '#7b68ee', 40, 8, 35, 4);
   for (let i = 0; i < 10; i++) spawnFireSprite(player.x, player.y, 2);
+}
+
+function useBombTempest() {
+  // Directional cone — 60° forward arc
+  player.bombs--;
+  player.invincible = 60;
+  bombCooldown = 20;
+  shakeTimer = 12; shakeIntensity = 6; slowmoTimer = 15;
+  const coneAngle = Math.PI / 3; // 60 degrees
+  const coneRange = 400;
+  const coneDir = -Math.PI / 2; // straight up
+
+  // Clear bullets in cone
+  const newBullets = [];
+  for (const b of enemyBullets) {
+    const dx = b.x - player.x, dy = b.y - player.y;
+    const d = Math.hypot(dx, dy);
+    const angle = Math.atan2(dy, dx);
+    const angleDiff = Math.abs(((angle - coneDir + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+    if (d < coneRange && angleDiff < coneAngle / 2) {
+      spawnParticles(b.x, b.y, '#ff4444', 2, 2, 10, 2);
+      score += 10;
+    } else {
+      newBullets.push(b);
+    }
+  }
+  enemyBullets = newBullets;
+
+  // Damage enemies in cone (2x damage)
+  for (const e of enemies) {
+    const dx = e.x - player.x, dy = e.y - player.y;
+    const d = Math.hypot(dx, dy);
+    const angle = Math.atan2(dy, dx);
+    const angleDiff = Math.abs(((angle - coneDir + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+    if (d < coneRange && angleDiff < coneAngle / 2) { e.hp -= 40; e.flash = 5; }
+  }
+  for (const b of bosses) {
+    const dx = b.x - player.x, dy = b.y - player.y;
+    const d = Math.hypot(dx, dy);
+    const angle = Math.atan2(dy, dx);
+    const angleDiff = Math.abs(((angle - coneDir + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+    if (d < coneRange && angleDiff < coneAngle / 2) { b.hp -= 60; b.flash = 5; }
+  }
+
+  // Cone visual particles
+  for (let i = 0; i < 30; i++) {
+    const a = coneDir + (Math.random() - 0.5) * coneAngle;
+    const d = Math.random() * coneRange;
+    spawnParticles(player.x + Math.cos(a) * d, player.y + Math.sin(a) * d, '#ff4444', 2, 3, 20, 3);
+  }
+  for (let i = 0; i < 5; i++) spawnFireSprite(player.x, player.y - 60, 1.5);
+}
+
+function useBombBastion() {
+  // Shield bubble — sustained protection
+  player.bombs--;
+  bombCooldown = 30;
+  shieldBombActive = true;
+  shieldBombTimer = 180; // 3 seconds
+  shieldBombRadius = 70;
+  shakeTimer = 8; shakeIntensity = 4;
+  spawnParticles(player.x, player.y, '#44ff88', 30, 6, 25, 3);
+}
+
+function useBomb() {
+  if (player.bombs <= 0 || !player.alive || bombCooldown > 0) return;
+  const shipType = selectedShip;
+  if (shipType === 0) useBombVanguard();
+  else if (shipType === 1) useBombTempest();
+  else useBombBastion();
 }
 
 // ---- ENEMY TYPES ----
@@ -1134,12 +1359,9 @@ function drawBackground() {
   ctx.fillRect(W - 30, 0, 30, H);
 }
 
-// ---- DRAW PLAYER ----
-function drawPlayer() {
+// ---- DRAW PLAYER (Foozle — Vanguard) ----
+function drawPlayerFoozle() {
   const p = player;
-  if (!p.alive) return;
-
-  const focused = isFocused();
   ctx.save();
   ctx.translate(p.x, p.y);
 
@@ -1151,23 +1373,12 @@ function drawPlayer() {
 
   const engineImg = img.engineIdle;
   if (engineImg) {
-    // Engine idle: sprite strip, each frame 48px wide (width/48 = frame count)
     const frameW = 48, frameH = 48;
     const totalFrames = Math.floor(engineImg.width / frameW);
     const frame = p.engineFrame % totalFrames;
     const drawSize = 56;
-    // Engine is below the ship
     ctx.drawImage(engineImg, frame * frameW, 0, frameW, frameH,
       -drawSize / 2, 8, drawSize, drawSize);
-  } else {
-    // Fallback: programmatic engine glow
-    const glowSize = 15 + Math.sin(globalTime * 0.3) * 3;
-    const engineGrad = ctx.createRadialGradient(0, 12, 0, 0, 12, glowSize);
-    engineGrad.addColorStop(0, 'rgba(0, 200, 255, 0.8)');
-    engineGrad.addColorStop(0.5, 'rgba(120, 100, 255, 0.3)');
-    engineGrad.addColorStop(1, 'rgba(120, 100, 255, 0)');
-    ctx.fillStyle = engineGrad;
-    ctx.fillRect(-glowSize, 5, glowSize * 2, glowSize * 1.5);
   }
 
   // Choose player sprite based on HP
@@ -1182,16 +1393,10 @@ function drawPlayer() {
   if (shipSprite) {
     ctx.drawImage(shipSprite, -shipSize / 2, -shipSize / 2, shipSize, shipSize);
   } else {
-    // Fallback: programmatic ship
     ctx.fillStyle = '#ddeeff';
     ctx.beginPath();
     ctx.moveTo(0, -16); ctx.lineTo(-12, 10); ctx.lineTo(-6, 14); ctx.lineTo(6, 14); ctx.lineTo(12, 10);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#7b68ee';
-    ctx.beginPath(); ctx.moveTo(-6, 0); ctx.lineTo(-20, 12); ctx.lineTo(-14, 14); ctx.lineTo(-4, 8); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(20, 12); ctx.lineTo(14, 14); ctx.lineTo(4, 8); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#00ffff';
-    ctx.beginPath(); ctx.arc(0, -2, 3, 0, Math.PI * 2); ctx.fill();
   }
 
   // Engine glow effect (additive)
@@ -1206,10 +1411,109 @@ function drawPlayer() {
   ctx.globalCompositeOperation = 'source-over';
 
   ctx.globalAlpha = 1;
+  ctx.restore();
+}
 
-  // Focus mode shield
+// ---- DRAW PLAYER (Kenney — Tempest / Bastion) ----
+function drawPlayerKenney(baseKey, dmgKeys, shipColor) {
+  const p = player;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+
+  if (p.invincible > 0 && Math.floor(globalTime / 3) % 2) ctx.globalAlpha = 0.5;
+
+  // Programmatic engine glow behind ship
+  const glowSize = 15 + Math.sin(globalTime * 0.3) * 3;
+  const engineGrad = ctx.createRadialGradient(0, 18, 0, 0, 18, glowSize);
+  const glowCol = shipColor || '#00ccff';
+  engineGrad.addColorStop(0, glowCol + 'cc');
+  engineGrad.addColorStop(0.5, glowCol + '44');
+  engineGrad.addColorStop(1, glowCol + '00');
+  ctx.fillStyle = engineGrad;
+  ctx.fillRect(-glowSize, 10, glowSize * 2, glowSize * 1.5);
+
+  // Draw base ship sprite
+  const baseSprite = img[baseKey];
+  const shipSize = 56;
+  if (baseSprite) {
+    ctx.drawImage(baseSprite, -shipSize / 2, -shipSize / 2, shipSize, shipSize);
+
+    // Overlay damage sprite based on HP
+    const hpPct = p.hp / p.maxHp;
+    let dmgSprite = null;
+    if (hpPct <= 0.25) dmgSprite = img[dmgKeys[2]];
+    else if (hpPct <= 0.5) dmgSprite = img[dmgKeys[1]];
+    else if (hpPct <= 0.75) dmgSprite = img[dmgKeys[0]];
+    if (dmgSprite) {
+      ctx.drawImage(dmgSprite, -shipSize / 2, -shipSize / 2, shipSize, shipSize);
+    }
+  } else {
+    ctx.fillStyle = shipColor || '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(0, -16); ctx.lineTo(-14, 12); ctx.lineTo(14, 12);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Engine glow effect (additive)
+  ctx.globalCompositeOperation = 'lighter';
+  const glowR = 18 + Math.sin(globalTime * 0.2) * 4;
+  const thrustGrad = ctx.createRadialGradient(0, 20, 0, 0, 20, glowR);
+  thrustGrad.addColorStop(0, glowCol + '88');
+  thrustGrad.addColorStop(0.5, glowCol + '33');
+  thrustGrad.addColorStop(1, glowCol + '00');
+  ctx.fillStyle = thrustGrad;
+  ctx.fillRect(-glowR, 10, glowR * 2, glowR);
+  ctx.globalCompositeOperation = 'source-over';
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// ---- DRAW PLAYER (dispatch + shared elements) ----
+function drawPlayer() {
+  const p = player;
+  if (!p.alive) return;
+
+  const focused = isFocused();
+  const cfg = SHIP_CONFIGS[selectedShip];
+
+  // Draw ship body
+  if (cfg.drawType === 'foozle') {
+    drawPlayerFoozle();
+  } else if (cfg.drawType === 'kenney2') {
+    drawPlayerKenney('ship2Base', ['ship2Dmg1', 'ship2Dmg2', 'ship2Dmg3'], '#ff4466');
+  } else {
+    drawPlayerKenney('ship3Base', ['ship3Dmg1', 'ship3Dmg2', 'ship3Dmg3'], '#44ff88');
+  }
+
+  // Shield bomb bubble (Bastion)
+  if (shieldBombActive) {
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    const shieldImg = img.shieldInvinc;
+    if (shieldImg) {
+      const shieldFrameW = 64, shieldFrameH = 64;
+      const totalShieldFrames = Math.floor(shieldImg.width / shieldFrameW);
+      const shieldFrame = Math.floor(globalTime / 6) % totalShieldFrames;
+      const sz = shieldBombRadius * 2.2;
+      ctx.globalAlpha = 0.5 + Math.sin(globalTime * 0.15) * 0.2;
+      ctx.drawImage(shieldImg, shieldFrame * shieldFrameW, 0, shieldFrameW, shieldFrameH,
+        -sz / 2, -sz / 2, sz, sz);
+    } else {
+      // Fallback: programmatic bubble
+      ctx.globalAlpha = 0.3 + Math.sin(globalTime * 0.15) * 0.1;
+      ctx.strokeStyle = '#44ff88';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, shieldBombRadius, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // Focus mode shield + hitbox
   if (focused) {
-    // Show shield sprite
+    ctx.save();
+    ctx.translate(p.x, p.y);
     const shieldImg = img.shieldRound;
     if (shieldImg) {
       const shieldFrameW = 64, shieldFrameH = 64;
@@ -1220,30 +1524,29 @@ function drawPlayer() {
         -36, -36, 72, 72);
       ctx.globalAlpha = 1;
     }
-    // Hitbox indicator
     ctx.strokeStyle = '#ff6ec7'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(0, 0, p.hitboxRadius + 4, 0, Math.PI * 2); ctx.stroke();
     ctx.fillStyle = '#ff6ec7';
     ctx.beginPath(); ctx.arc(0, 0, p.hitboxRadius, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
   }
 
-  ctx.restore();
-
   // Options (power level 4)
+  const optCount = selectedShip === 2 ? 3 : 2; // Bastion gets 3 options
   if (p.power >= 4) {
     for (const opt of p.options) {
       ctx.save();
       ctx.translate(opt.x, opt.y);
-      // Glowing orb
+      const optColor = SHIP_CONFIGS[selectedShip].color;
       ctx.globalCompositeOperation = 'lighter';
       const optGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 10);
-      optGrad.addColorStop(0, 'rgba(123, 104, 238, 0.9)');
-      optGrad.addColorStop(0.5, 'rgba(123, 104, 238, 0.3)');
-      optGrad.addColorStop(1, 'rgba(123, 104, 238, 0)');
+      optGrad.addColorStop(0, optColor + 'ee');
+      optGrad.addColorStop(0.5, optColor + '55');
+      optGrad.addColorStop(1, optColor + '00');
       ctx.fillStyle = optGrad;
       ctx.fillRect(-10, -10, 20, 20);
       ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = '#7b68ee';
+      ctx.fillStyle = optColor;
       ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#ffffff';
       ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI * 2); ctx.fill();
@@ -1520,6 +1823,147 @@ function drawFireSprites() {
   }
 }
 
+// ---- DRAW SHIP SELECT SCREEN ----
+function drawSelectScreen() {
+  selectAnim++;
+  ctx.save();
+
+  // Dim overlay
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Title
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 24px "Courier New"';
+  ctx.textAlign = 'center';
+  ctx.fillText('SELECT YOUR SHIP', W / 2, 50);
+
+  const panelW = W / 3;
+  const panelTop = 100;
+  const panelH = 480;
+
+  for (let i = 0; i < 3; i++) {
+    const cfg = SHIP_CONFIGS[i];
+    const cx = panelW * i + panelW / 2;
+    const isSelected = i === selectedShip;
+
+    // Panel background
+    ctx.fillStyle = isSelected ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.02)';
+    ctx.fillRect(panelW * i + 6, panelTop, panelW - 12, panelH);
+
+    // Selection border
+    if (isSelected) {
+      const pulse = 0.6 + Math.sin(selectAnim * 0.08) * 0.4;
+      ctx.strokeStyle = cfg.color;
+      ctx.globalAlpha = pulse;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(panelW * i + 6, panelTop, panelW - 12, panelH);
+      ctx.globalAlpha = 1;
+    }
+
+    // Ship sprite preview
+    const shipY = panelTop + 90;
+    const previewSize = 72;
+    ctx.save();
+    ctx.translate(cx, shipY);
+
+    // Floating animation
+    const float = Math.sin(selectAnim * 0.04 + i * 2) * 5;
+    ctx.translate(0, float);
+
+    if (cfg.drawType === 'foozle') {
+      const spr = img.playerBase;
+      if (spr) ctx.drawImage(spr, -previewSize / 2, -previewSize / 2, previewSize, previewSize);
+    } else if (cfg.drawType === 'kenney2') {
+      const spr = img.ship2Base;
+      if (spr) ctx.drawImage(spr, -previewSize / 2, -previewSize / 2, previewSize, previewSize);
+    } else {
+      const spr = img.ship3Base;
+      if (spr) ctx.drawImage(spr, -previewSize / 2, -previewSize / 2, previewSize, previewSize);
+    }
+
+    // Ship glow
+    ctx.globalCompositeOperation = 'lighter';
+    const gR = previewSize * 0.6;
+    const gGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, gR);
+    gGrad.addColorStop(0, cfg.color + '33');
+    gGrad.addColorStop(1, cfg.color + '00');
+    ctx.fillStyle = gGrad;
+    ctx.fillRect(-gR, -gR, gR * 2, gR * 2);
+    ctx.globalCompositeOperation = 'source-over';
+
+    ctx.restore();
+
+    // Ship name
+    ctx.fillStyle = cfg.color;
+    ctx.font = 'bold 16px "Courier New"';
+    ctx.textAlign = 'center';
+    ctx.fillText(cfg.name, cx, panelTop + 155);
+
+    // Subtitle
+    ctx.fillStyle = '#888';
+    ctx.font = '10px "Courier New"';
+    ctx.fillText(cfg.subtitle, cx, panelTop + 172);
+
+    // Stat bars
+    const statNames = ['HP', 'SPD', 'PWR', 'BMB'];
+    const statKeys = ['hp', 'spd', 'pwr', 'bmb'];
+    const statColors = ['#ff4444', '#44aaff', '#ffaa00', '#44ff44'];
+    const barX = panelW * i + 24;
+    const barStartY = panelTop + 200;
+
+    for (let s = 0; s < 4; s++) {
+      const sy = barStartY + s * 28;
+      ctx.fillStyle = '#888';
+      ctx.font = '10px "Courier New"';
+      ctx.textAlign = 'left';
+      ctx.fillText(statNames[s], barX, sy + 10);
+      const barW = panelW - 70;
+      const bx = barX + 30;
+      ctx.fillStyle = '#222';
+      ctx.fillRect(bx, sy, barW, 10);
+      ctx.fillStyle = statColors[s];
+      ctx.fillRect(bx, sy, barW * (cfg.stats[statKeys[s]] / 5), 10);
+    }
+
+    // Description
+    ctx.fillStyle = '#aaa';
+    ctx.font = '10px "Courier New"';
+    ctx.textAlign = 'center';
+    ctx.fillText(cfg.desc[0], cx, panelTop + 340);
+    ctx.fillText(cfg.desc[1], cx, panelTop + 356);
+
+    // Weapon/Bomb info
+    ctx.fillStyle = '#666';
+    ctx.font = '9px "Courier New"';
+    if (i === 0) {
+      ctx.fillText('WEAPON: Spread Shot', cx, panelTop + 390);
+      ctx.fillText('BOMB: Full Clear', cx, panelTop + 406);
+    } else if (i === 1) {
+      ctx.fillText('WEAPON: Rapid Beam', cx, panelTop + 390);
+      ctx.fillText('BOMB: Forward Cone', cx, panelTop + 406);
+    } else {
+      ctx.fillText('WEAPON: Wide Spread', cx, panelTop + 390);
+      ctx.fillText('BOMB: Shield Bubble', cx, panelTop + 406);
+    }
+  }
+
+  // Confirm prompt
+  const confirmAlpha = 0.5 + Math.sin(selectAnim * 0.08) * 0.5;
+  ctx.globalAlpha = confirmAlpha;
+  ctx.fillStyle = '#00ffff';
+  ctx.font = '14px "Courier New"';
+  ctx.textAlign = 'center';
+  if (isMobile) {
+    ctx.fillText('[ TAP SHIP TO SELECT — TAP AGAIN TO LAUNCH ]', W / 2, H - 40);
+  } else {
+    ctx.fillText('[ LEFT/RIGHT TO SELECT — ENTER TO LAUNCH ]', W / 2, H - 40);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
 // ---- HUD ----
 function drawHUD() {
   ctx.fillStyle = '#ffffff'; ctx.font = '14px "Courier New"'; ctx.textAlign = 'left';
@@ -1547,6 +1991,11 @@ function drawHUD() {
 
   ctx.fillStyle = '#555';
   ctx.fillText(`BULLETS: ${enemyBullets.length}`, 10, 15);
+
+  // Ship name indicator
+  ctx.fillStyle = SHIP_CONFIGS[selectedShip].color;
+  ctx.textAlign = 'center';
+  ctx.fillText(SHIP_CONFIGS[selectedShip].name, W / 2, 15);
 }
 
 // ============================================================
@@ -1634,12 +2083,28 @@ function update() {
 
   // Options
   if (p.power >= 4) {
-    if (p.options.length < 2) p.options = [{ x: p.x - 25, y: p.y + 5 }, { x: p.x + 25, y: p.y + 5 }];
+    const optCount = selectedShip === 2 ? 3 : 2;
+    if (p.options.length < optCount) {
+      p.options = [];
+      for (let i = 0; i < optCount; i++) {
+        p.options.push({ x: p.x, y: p.y + 5 });
+      }
+    }
     const optDist = focused ? 15 : 30;
-    p.options[0].x = lerp(p.options[0].x, p.x - optDist, 0.1);
-    p.options[0].y = lerp(p.options[0].y, p.y + 5, 0.1);
-    p.options[1].x = lerp(p.options[1].x, p.x + optDist, 0.1);
-    p.options[1].y = lerp(p.options[1].y, p.y + 5, 0.1);
+    if (optCount === 2) {
+      p.options[0].x = lerp(p.options[0].x, p.x - optDist, 0.1);
+      p.options[0].y = lerp(p.options[0].y, p.y + 5, 0.1);
+      p.options[1].x = lerp(p.options[1].x, p.x + optDist, 0.1);
+      p.options[1].y = lerp(p.options[1].y, p.y + 5, 0.1);
+    } else {
+      // 3 options: left, right, and behind
+      p.options[0].x = lerp(p.options[0].x, p.x - optDist, 0.1);
+      p.options[0].y = lerp(p.options[0].y, p.y + 3, 0.1);
+      p.options[1].x = lerp(p.options[1].x, p.x + optDist, 0.1);
+      p.options[1].y = lerp(p.options[1].y, p.y + 3, 0.1);
+      p.options[2].x = lerp(p.options[2].x, p.x, 0.1);
+      p.options[2].y = lerp(p.options[2].y, p.y + 20, 0.1);
+    }
   }
 
   // Shooting
@@ -1675,7 +2140,8 @@ function update() {
     for (const e of enemies) {
       if (!e.alive) continue;
       if (Math.abs(b.x - e.x) < e.w / 2 + 4 && Math.abs(b.y - e.y) < e.h / 2 + 4) {
-        e.hp -= b.damage; e.flash = 3; b.y = -999;
+        e.hp -= b.damage; e.flash = 3;
+        if (!b.pierce) b.y = -999;
         spawnParticles(b.x, b.y, e.color, 2, 2, 10, 2);
         if (e.hp <= 0) {
           e.alive = false; score += e.value;
@@ -1689,7 +2155,8 @@ function update() {
     for (const boss of bosses) {
       if (!boss.alive) continue;
       if (Math.abs(b.x - boss.x) < boss.w / 2 + 4 && Math.abs(b.y - boss.y) < boss.h / 2 + 4) {
-        boss.hp -= b.damage; boss.flash = 2; b.y = -999;
+        boss.hp -= b.damage; boss.flash = 2;
+        if (!b.pierce) b.y = -999;
         spawnParticles(b.x, b.y, boss.color, 1, 2, 8, 2);
         if (boss.hp <= 0) {
           boss.alive = false; score += boss.value;
@@ -1702,6 +2169,27 @@ function update() {
           spawnItem(boss.x, boss.y, 'bomb');
         }
       }
+    }
+  }
+
+  // Shield bomb update (Bastion)
+  if (shieldBombActive) {
+    shieldBombTimer--;
+    if (shieldBombTimer <= 0) {
+      shieldBombActive = false;
+    } else {
+      const newBullets = [];
+      for (const b of enemyBullets) {
+        const d = dist(b, p);
+        if (d < shieldBombRadius) {
+          // Convert bullet to score item
+          score += 20;
+          spawnParticles(b.x, b.y, '#44ff88', 2, 1, 10, 1);
+        } else {
+          newBullets.push(b);
+        }
+      }
+      enemyBullets = newBullets;
     }
   }
 
@@ -1820,6 +2308,7 @@ function render() {
   }
 
   if (gameState === 'playing') drawHUD();
+  if (gameState === 'select') drawSelectScreen();
 
   // Wave announcement
   if (waveTimer < 60 && gameState === 'playing') {
@@ -1877,12 +2366,18 @@ function startGame() {
     autoFireIndicator.style.display = 'block';
   }
 
+  const cfg = SHIP_CONFIGS[selectedShip];
   score = 0; wave = 0; waveTimer = 100; graze = 0; globalTime = 0;
   player.x = W / 2; player.y = H - 80;
-  player.hp = 5; player.maxHp = 5; player.alive = true;
-  player.invincible = 120; player.power = 1; player.bombs = 3;
+  player.hp = cfg.hp; player.maxHp = cfg.maxHp; player.alive = true;
+  player.invincible = 120; player.power = 1; player.bombs = cfg.bombs;
+  player.speed = cfg.speed; player.focusSpeed = cfg.focusSpeed;
+  player.hitboxRadius = cfg.hitboxRadius; player.shootDelay = cfg.shootDelay;
   player.shootTimer = 0; player.deathAnim = 0; player.options = [];
   player.engineFrame = 0; player.engineTimer = 0;
+
+  // Reset shield bomb
+  shieldBombActive = false; shieldBombTimer = 0;
 
   playerBullets = []; enemies = []; enemyBullets = [];
   particles = []; items = []; bosses = []; fireSprites = [];
