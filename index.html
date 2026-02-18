@@ -485,6 +485,15 @@ function showSelectScreen() {
   document.getElementById('game-over').style.display = 'none';
   gameState = 'select';
   selectAnim = 0;
+
+  // Reset touch state to prevent stale dragId
+  touch.dragId = null;
+  touch.active = false;
+  touch.dx = 0;
+  touch.dy = 0;
+  touch.focus = false;
+  touch.bomb = false;
+  touch.btnIds.clear();
 }
 
 function handleTapStart(e) {
@@ -2479,6 +2488,15 @@ function startGame() {
   document.getElementById('title-screen').style.display = 'none';
   document.getElementById('game-over').style.display = 'none';
   gameState = 'playing';
+
+  // Reset touch state to prevent stale dragId from blocking movement
+  touch.dragId = null;
+  touch.active = false;
+  touch.dx = 0;
+  touch.dy = 0;
+  touch.focus = false;
+  touch.bomb = false;
+  touch.btnIds.clear();
 
   if (isMobile) {
     touchControls.classList.add('active');
