@@ -519,6 +519,33 @@ canvas.addEventListener('click', (e) => {
   handleTapStart(e);
   handleSelectTap(e);
 });
+// Mobile: touch events are preventDefault'd at document level, killing synthetic clicks.
+// Need direct touchend on canvas for select screen + title/gameover transitions.
+canvas.addEventListener('touchend', (e) => {
+  const t = e.changedTouches[0];
+  if (!t) return;
+  if (gameState === 'title') { showSelectScreen(); return; }
+  if (gameState === 'gameover') { showSelectScreen(); return; }
+  if (gameState !== 'select') return;
+  const rect = canvas.getBoundingClientRect();
+  const scale = canvas._scale || 1;
+  const cx = (t.clientX - rect.left) / scale;
+  const cy = (t.clientY - rect.top) / scale;
+  const panelW = W / 3;
+  if (cy > 80 && cy < 600) {
+    const tapped = Math.floor(cx / panelW);
+    if (tapped >= 0 && tapped < 3) {
+      if (tapped === selectedShip) {
+        startGame();
+      } else {
+        selectedShip = tapped;
+      }
+    }
+  }
+  if (cy > 600) {
+    startGame();
+  }
+}, { passive: true });
 document.getElementById('title-screen').addEventListener('click', handleTapStart);
 document.getElementById('title-screen').addEventListener('touchend', handleTapStart);
 document.getElementById('game-over').addEventListener('click', handleTapStart);
