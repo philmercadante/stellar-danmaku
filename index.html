@@ -1992,37 +1992,129 @@ function drawSelectScreen() {
 }
 
 // ---- HUD ----
+function drawPowerBar(x, y, w) {
+  // Visual power progression: 4 segments showing current level & what's ahead
+  const segW = (w - 6) / 4; // 4 segments with 2px gaps
+  const segH = 8;
+  const shipColor = SHIP_CONFIGS[selectedShip].color;
+  const labels = ['I', 'II', 'III', 'IV'];
+
+  for (let i = 0; i < 4; i++) {
+    const sx = x + i * (segW + 2);
+    const filled = player.power >= i + 1;
+
+    // Background
+    ctx.fillStyle = '#222';
+    ctx.fillRect(sx, y, segW, segH);
+
+    if (filled) {
+      // Filled segment with ship color gradient
+      const grad = ctx.createLinearGradient(sx, y, sx + segW, y);
+      grad.addColorStop(0, shipColor);
+      grad.addColorStop(1, shipColor + 'aa');
+      ctx.fillStyle = grad;
+      ctx.fillRect(sx, y, segW, segH);
+
+      // Bright edge
+      ctx.fillStyle = '#ffffff55';
+      ctx.fillRect(sx, y, segW, 1);
+    } else {
+      // Empty segment outline
+      ctx.strokeStyle = '#444';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(sx, y, segW, segH);
+    }
+
+    // Level number below
+    ctx.fillStyle = filled ? shipColor : '#555';
+    ctx.font = '8px "Courier New"';
+    ctx.textAlign = 'center';
+    ctx.fillText(labels[i], sx + segW / 2, y + segH + 10);
+  }
+
+  // "PWR" label
+  ctx.fillStyle = '#888';
+  ctx.font = '9px "Courier New"';
+  ctx.textAlign = 'left';
+  ctx.fillText('PWR', x, y - 3);
+}
+
 function drawHUD() {
   ctx.fillStyle = '#ffffff'; ctx.font = '14px "Courier New"'; ctx.textAlign = 'left';
 
-  const hudY = isMobile ? H - 90 : H;
+  if (isMobile) {
+    // ---- MOBILE HUD LAYOUT ----
+    // Top bar: ship name + wave + status
+    ctx.fillStyle = SHIP_CONFIGS[selectedShip].color;
+    ctx.font = 'bold 12px "Courier New"';
+    ctx.textAlign = 'center';
+    ctx.fillText(SHIP_CONFIGS[selectedShip].name, W / 2, 15);
 
-  ctx.fillText(`SCORE: ${score.toString().padStart(8, '0')}`, 10, hudY - 10);
-  ctx.fillStyle = '#888';
-  ctx.fillText(`HI: ${hiScore.toString().padStart(8, '0')}`, 10, hudY - 28);
+    ctx.fillStyle = '#7b68ee'; ctx.textAlign = 'right';
+    ctx.font = '12px "Courier New"';
+    ctx.fillText(`WAVE ${wave}`, W - 10, 15);
 
-  ctx.fillStyle = '#ff4444';
-  for (let i = 0; i < player.hp; i++) ctx.fillText('\u2665', W - 100 + i * 16, hudY - 28);
+    ctx.fillStyle = '#555'; ctx.textAlign = 'left';
+    ctx.font = '10px "Courier New"';
+    ctx.fillText(`${enemyBullets.length} BULLETS`, 10, 15);
 
-  ctx.fillStyle = '#44ff44';
-  for (let i = 0; i < player.bombs; i++) ctx.fillText('*', W - 100 + i * 16, hudY - 10);
+    // Second row: HP hearts + bomb stars
+    ctx.fillStyle = '#ff4444';
+    ctx.font = '14px "Courier New"'; ctx.textAlign = 'left';
+    for (let i = 0; i < player.hp; i++) {
+      ctx.fillText('\u2665', 10 + i * 15, 35);
+    }
+    // Bomb stars after hearts with a gap
+    const bombStartX = 10 + player.maxHp * 15 + 10;
+    ctx.fillStyle = '#44ff44';
+    for (let i = 0; i < player.bombs; i++) {
+      ctx.fillText('*', bombStartX + i * 14, 35);
+    }
 
-  ctx.fillStyle = '#ffaa00'; ctx.textAlign = 'right';
-  ctx.fillText(`POWER: ${player.power}/4`, W - 10, hudY - 28);
+    // Power bar on right side of second row
+    drawPowerBar(W - 130, 26, 120);
 
-  ctx.fillStyle = '#7b68ee';
-  ctx.fillText(`WAVE ${wave}`, W - 10, hudY - 10);
+    // Bottom left: score + graze (safe from buttons)
+    ctx.fillStyle = '#ffffff'; ctx.font = '14px "Courier New"'; ctx.textAlign = 'left';
+    ctx.fillText(`SCORE: ${score.toString().padStart(8, '0')}`, 10, H - 15);
+    ctx.fillStyle = '#888';
+    ctx.fillText(`HI: ${hiScore.toString().padStart(8, '0')}`, 10, H - 33);
+    ctx.fillStyle = '#888';
+    ctx.font = '12px "Courier New"';
+    ctx.fillText(`GRAZE: ${graze}`, 10, H - 51);
 
-  ctx.fillStyle = '#888'; ctx.textAlign = 'left';
-  ctx.fillText(`GRAZE: ${graze}`, 10, hudY - 46);
+  } else {
+    // ---- DESKTOP HUD LAYOUT ----
+    // Top bar: bullets / ship name / wave
+    ctx.fillStyle = '#555';
+    ctx.fillText(`BULLETS: ${enemyBullets.length}`, 10, 15);
 
-  ctx.fillStyle = '#555';
-  ctx.fillText(`BULLETS: ${enemyBullets.length}`, 10, 15);
+    ctx.fillStyle = SHIP_CONFIGS[selectedShip].color;
+    ctx.textAlign = 'center';
+    ctx.fillText(SHIP_CONFIGS[selectedShip].name, W / 2, 15);
 
-  // Ship name indicator
-  ctx.fillStyle = SHIP_CONFIGS[selectedShip].color;
-  ctx.textAlign = 'center';
-  ctx.fillText(SHIP_CONFIGS[selectedShip].name, W / 2, 15);
+    ctx.fillStyle = '#7b68ee'; ctx.textAlign = 'right';
+    ctx.fillText(`WAVE ${wave}`, W - 10, 15);
+
+    // Bottom left: score / hi / graze
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(`SCORE: ${score.toString().padStart(8, '0')}`, 10, H - 10);
+    ctx.fillStyle = '#888';
+    ctx.fillText(`HI: ${hiScore.toString().padStart(8, '0')}`, 10, H - 28);
+    ctx.fillStyle = '#888';
+    ctx.fillText(`GRAZE: ${graze}`, 10, H - 46);
+
+    // Bottom right: HP hearts / bomb stars / power bar
+    ctx.fillStyle = '#ff4444'; ctx.textAlign = 'left';
+    for (let i = 0; i < player.hp; i++) ctx.fillText('\u2665', W - 140 + i * 16, H - 10);
+
+    ctx.fillStyle = '#44ff44';
+    for (let i = 0; i < player.bombs; i++) ctx.fillText('*', W - 140 + i * 16, H - 28);
+
+    // Power bar
+    drawPowerBar(W - 140, H - 58, 130);
+  }
 }
 
 // ============================================================
