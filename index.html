@@ -1714,7 +1714,23 @@ function createBoss(bossType) {
     case 5: return { ...base, hp: 160, maxHp: 160, name: 'IRON SCARAB', color: '#ff8800', w: 60, h: 60, renderW: 140, renderH: 210, spriteKey: 'miniboss5', isMiniboss: true, value: 2500, targetY: 120, chargeTimer: 0, charging: false, chargeVx: 0, chargeVy: 0, aiState: 'HOVER', aiTimer: 0, bouncesLeft: 0, maxBounces: 2, craters: [], chargeSpeed: 5.5, wingsSpread: true };
     case 6: return { ...base, hp: 220, maxHp: 220, name: 'NEBULA SERPENT', color: '#22ff66', w: 60, h: 75, renderW: 120, renderH: 135, spriteKey: 'serpentHead', isMiniboss: true, value: 3000, targetY: 180, segments: [], posHistory: [], heading: Math.PI / 2, aiState: 'ROTATE', aiTimer: 0, aiDuration: 45, rotateDir: 1, baseSpeed: 2.2, segCount: 7, segSpacing: 42, _cycleStep: 0 };
     case 7: return { ...base, hp: 220, maxHp: 220, name: 'PLASMA SENTINEL', color: '#4488ff', w: 55, h: 55, renderW: 130, renderH: 195, spriteKey: 'miniboss7', isMiniboss: true, value: 3500, targetY: 140, orbAngle: 0, orbCount: 4, orbSpeed: 0.03, shields: [{hp:30,maxHp:30,alive:true},{hp:30,maxHp:30,alive:true},{hp:30,maxHp:30,alive:true},{hp:30,maxHp:30,alive:true}], shieldsAlive: 4, vulnerabilityTimer: 0, vulnerabilityActive: false, vulnerabilityDuration: 90, vulnerabilityCooldown: 480, vulnerabilityDmgAccum: 0, retreatTimer: 0 };
-    case 8: return { ...base, hp: 200, maxHp: 200, name: 'VOID HYDRA', color: '#cc44ff', w: 60, h: 60, renderW: 150, renderH: 224, spriteKey: 'miniboss8', isMiniboss: true, value: 4000, targetY: 110, headAngles: [0, 0, 0], headPositions: [{x:0,y:0},{x:0,y:0},{x:0,y:0}], heads: [{hp:40,maxHp:40,alive:true,regenTimer:0,regenCount:0},{hp:40,maxHp:40,alive:true,regenTimer:0,regenCount:0},{hp:40,maxHp:40,alive:true,regenTimer:0,regenCount:0}], exposedTimer: 0, exposedActive: false, lastSeverTimes: [0,0,0], headsAlive: 3 };
+    case 8: return { ...base, hp: 300, maxHp: 300, name: 'VOID HYDRA', color: '#cc44ff', w: 100, h: 60, renderW: 220, renderH: 120, spriteKey: 'miniboss8', isMiniboss: true, value: 4000, targetY: 15,
+      bodyDriftX: W / 2,
+      necks: [
+        { anchorOfsX: -55, anchorOfsY: 55, headX: W / 2 - 80, headY: 200, headTgtX: W / 2 - 80, headTgtY: 200, headVx: 0, headVy: 0, segments: [], attackState: 'IDLE', attackTimer: 0, attackCooldown: 60, ctrlPhase: 0, retargetTimer: 0 },
+        { anchorOfsX: 0, anchorOfsY: 65, headX: W / 2, headY: 220, headTgtX: W / 2, headTgtY: 220, headVx: 0, headVy: 0, segments: [], attackState: 'IDLE', attackTimer: 0, attackCooldown: 180, ctrlPhase: 2.1, retargetTimer: 0 },
+        { anchorOfsX: 55, anchorOfsY: 55, headX: W / 2 + 80, headY: 200, headTgtX: W / 2 + 80, headTgtY: 200, headVx: 0, headVy: 0, segments: [], attackState: 'IDLE', attackTimer: 0, attackCooldown: 300, ctrlPhase: 4.2, retargetTimer: 0 },
+      ],
+      heads: [
+        { hp: 60, maxHp: 60, alive: true, regenTimer: 0, regenCount: 0, attackType: 'beam' },
+        { hp: 60, maxHp: 60, alive: true, regenTimer: 0, regenCount: 0, attackType: 'breath' },
+        { hp: 60, maxHp: 60, alive: true, regenTimer: 0, regenCount: 0, attackType: 'glob' },
+      ],
+      globs: [], beams: [],
+      exposedTimer: 0, exposedActive: false, lastSeverTimes: [0, 0, 0], headsAlive: 3,
+      headPositions: [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }],
+      neckSegCount: 10, maxNeckLen: 360,
+    };
     default: return { ...base, hp: 200 + bossType * 100, maxHp: 200 + bossType * 100, name: 'BOSS', color: '#ff4444', spriteKey: 'boss1' };
   }
 }
@@ -1803,6 +1819,29 @@ function updateBossAI(b) {
     if (b.type === 6 && b.posHistory) {
       b.posHistory.push({ x: b.x, y: b.y, heading: b.heading });
       if (b.posHistory.length > 500) b.posHistory.shift();
+    }
+    // Hydra: compute neck segments during entry so necks unfurl smoothly
+    if (b.type === 8 && b.necks) {
+      for (let h = 0; h < 3; h++) {
+        const neck = b.necks[h];
+        const ax = b.x + neck.anchorOfsX, ay = b.y + neck.anchorOfsY;
+        // During entry, heads cluster near anchors and slowly extend
+        neck.headX = lerp(neck.headX, ax + (h - 1) * 40, 0.02);
+        neck.headY = lerp(neck.headY, ay + 80 + h * 20, 0.02);
+        b.headPositions[h] = { x: neck.headX, y: neck.headY };
+        // Compute segments
+        const p0x = ax, p0y = ay, p3x = neck.headX, p3y = neck.headY;
+        const p1x = ax, p1y = ay + 40;
+        const p2x = neck.headX, p2y = neck.headY - 20;
+        neck.segments = [];
+        for (let s = 0; s <= b.neckSegCount; s++) {
+          const t = s / b.neckSegCount;
+          const mt = 1 - t;
+          const sx = mt*mt*mt*p0x + 3*mt*mt*t*p1x + 3*mt*t*t*p2x + t*t*t*p3x;
+          const sy = mt*mt*mt*p0y + 3*mt*mt*t*p1y + 3*mt*t*t*p2y + t*t*t*p3y;
+          neck.segments.push({ x: sx, y: sy, r: Math.max(12 - s * 0.5, 6) });
+        }
+      }
     }
     return;
   }
@@ -2105,66 +2144,213 @@ function updateMinibossMovement(b) {
       b.y = lerp(b.y, b.targetY + Math.sin(globalTime * 0.02) * 15, 0.02);
       break;
     }
-    case 8: { // Hydra: movement + head tracking + regeneration + exposed state
-      // Count alive heads
+    case 8: { // Hydra: stationary body + 3 serpent necks + independent head AI
       b.headsAlive = b.heads.filter(h => h.alive).length;
-      // Movement — faster with fewer heads, thrashing when exposed
+
+      // Body: nearly stationary, very slow horizontal drift
       b.moveTimer++;
       if (b.exposedActive) {
-        // Exposed: thrash wildly
-        b.x += Math.sin(globalTime * 0.3) * 3;
-        b.y = lerp(b.y, b.targetY + Math.sin(globalTime * 0.15) * 30, 0.05);
+        b.x += Math.sin(globalTime * 0.3) * 2;
         b.exposedTimer--;
         if (b.exposedTimer <= 0) b.exposedActive = false;
       } else {
-        const moveRate = b.headsAlive === 3 ? 140 : b.headsAlive === 2 ? 110 : b.headsAlive === 1 ? 80 : 60;
-        const moveSpeed = b.headsAlive === 3 ? 0.02 : b.headsAlive === 2 ? 0.03 : 0.04;
-        if (b.moveTimer > moveRate) { b.moveTimer = 0; b.targetX = 70 + Math.random() * (W - 140); }
-        b.x = lerp(b.x, b.targetX, moveSpeed);
+        if (b.moveTimer > 300) { b.moveTimer = 0; b.bodyDriftX = W / 2 + (Math.random() - 0.5) * 60; }
+        b.x = lerp(b.x, b.bodyDriftX, 0.005);
       }
-      // Head oscillation — wider sway with fewer heads (enraged)
-      const swayAmp = b.headsAlive === 3 ? 0.4 : b.headsAlive === 2 ? 0.6 : 0.8;
-      const swaySpeed = 0.05 + (3 - b.headsAlive) * 0.015;
-      b.headAngles[0] = Math.sin(globalTime * swaySpeed) * swayAmp;
-      b.headAngles[1] = Math.sin(globalTime * swaySpeed + 2.1) * swayAmp;
-      b.headAngles[2] = Math.sin(globalTime * swaySpeed + 4.2) * swayAmp;
-      // Compute head world positions
-      const neckLen = 65;
-      const headBaseAngles = [-0.7, 0, 0.7];
+      b.y = lerp(b.y, b.targetY, 0.02);
+
+      // --- Per-head AI: independent movement + attack state machine ---
       for (let h = 0; h < 3; h++) {
-        const a = headBaseAngles[h] + b.headAngles[h] - Math.PI / 2;
-        b.headPositions[h] = { x: b.x + Math.cos(a) * neckLen, y: b.y + Math.sin(a) * neckLen };
+        const neck = b.necks[h];
+        const head = b.heads[h];
+        const anchorX = b.x + neck.anchorOfsX;
+        const anchorY = b.y + neck.anchorOfsY;
+
+        if (head.alive) {
+          // Attack state machine
+          neck.attackTimer++;
+          switch (neck.attackState) {
+            case 'IDLE':
+              // Head wanders independently
+              neck.retargetTimer--;
+              if (neck.retargetTimer <= 0) {
+                neck.retargetTimer = 90 + Math.floor(Math.random() * 60);
+                // Each head roams a different horizontal zone to spread out
+                const zoneX = h === 0 ? W * 0.25 : h === 1 ? W * 0.5 : W * 0.75;
+                neck.headTgtX = zoneX + (Math.random() - 0.5) * (W * 0.4);
+                neck.headTgtX = Math.max(35, Math.min(W - 35, neck.headTgtX));
+                // Push heads deep into the arena — y 200 to 420
+                neck.headTgtY = 200 + Math.random() * 220;
+              }
+              // Check if ready to attack
+              if (neck.attackCooldown <= 0) {
+                neck.attackState = 'TELEGRAPH';
+                neck.attackTimer = 0;
+              }
+              neck.attackCooldown--;
+              break;
+            case 'TELEGRAPH':
+              // Head slows down toward attack position
+              neck.headTgtY = lerp(neck.headTgtY, 160 + h * 40, 0.03);
+              // Telegraph duration varies by attack type
+              const telegraphDur = head.attackType === 'beam' ? 90 : head.attackType === 'breath' ? 60 : 50;
+              if (neck.attackTimer >= telegraphDur) {
+                neck.attackState = 'ATTACK';
+                neck.attackTimer = 0;
+              }
+              break;
+            case 'ATTACK':
+              // Head holds position — attacks handled in bossPattern8
+              const attackDur = head.attackType === 'beam' ? 120 : head.attackType === 'breath' ? 90 : 30;
+              if (neck.attackTimer >= attackDur) {
+                neck.attackState = 'COOLDOWN';
+                neck.attackTimer = 0;
+              }
+              break;
+            case 'COOLDOWN':
+              // Retreat toward body briefly
+              neck.headTgtY = lerp(neck.headTgtY, anchorY + 80, 0.05);
+              const cdDur = head.attackType === 'beam' ? 240 : head.attackType === 'breath' ? 240 : 300;
+              if (neck.attackTimer >= 60) {
+                neck.attackState = 'IDLE';
+                neck.attackTimer = 0;
+                neck.attackCooldown = cdDur;
+                neck.retargetTimer = 0; // Immediately pick new wander target
+              }
+              break;
+          }
+
+          // Move head toward target
+          const headSpd = neck.attackState === 'ATTACK' ? 0.4 : neck.attackState === 'TELEGRAPH' ? 1.0 : 2.5;
+          const dx = neck.headTgtX - neck.headX;
+          const dy = neck.headTgtY - neck.headY;
+          const dLen = Math.hypot(dx, dy);
+          if (dLen > 1) {
+            const moveAmt = Math.min(headSpd, dLen);
+            neck.headX += (dx / dLen) * moveAmt;
+            neck.headY += (dy / dLen) * moveAmt;
+          }
+
+          // Neck length constraint — pull head back if too far from anchor
+          const neckDx = neck.headX - anchorX;
+          const neckDy = neck.headY - anchorY;
+          const neckDist = Math.hypot(neckDx, neckDy);
+          if (neckDist > b.maxNeckLen) {
+            const pullback = neckDist - b.maxNeckLen;
+            neck.headX -= (neckDx / neckDist) * pullback;
+            neck.headY -= (neckDy / neckDist) * pullback;
+          }
+
+          // Keep head in arena bounds
+          neck.headX = Math.max(25, Math.min(W - 25, neck.headX));
+          neck.headY = Math.max(60, Math.min(H - 100, neck.headY));
+
+          // Track smoothed velocity for bezier control
+          const newVx = neck.headX - (b.headPositions[h].x || neck.headX);
+          const newVy = neck.headY - (b.headPositions[h].y || neck.headY);
+          neck.headVx = lerp(neck.headVx, newVx, 0.15);
+          neck.headVy = lerp(neck.headVy, newVy, 0.15);
+        } else {
+          // Dead head: retract neck toward anchor
+          neck.headX = lerp(neck.headX, anchorX, 0.02);
+          neck.headY = lerp(neck.headY, anchorY + 40, 0.02);
+          neck.headVx *= 0.95; neck.headVy *= 0.95;
+          neck.attackState = 'IDLE';
+          neck.attackTimer = 0;
+        }
+
+        // Update head world position
+        b.headPositions[h] = { x: neck.headX, y: neck.headY };
+
+        // --- Compute neck segments via cubic bezier + perpendicular wobble ---
+        const p0x = anchorX, p0y = anchorY;
+        const p3x = neck.headX, p3y = neck.headY;
+        // Control points: P1 curves neck downward from body, P2 curves based on head velocity
+        const p1x = anchorX + Math.sin(globalTime * 0.025 + neck.ctrlPhase) * 25;
+        const p1y = anchorY + 75;
+        const p2x = neck.headX - neck.headVx * 8;
+        const p2y = neck.headY - 35;
+
+        neck.segments = [];
+        for (let s = 0; s <= b.neckSegCount; s++) {
+          const t = s / b.neckSegCount;
+          const mt = 1 - t;
+          // Cubic bezier position
+          let sx = mt * mt * mt * p0x + 3 * mt * mt * t * p1x + 3 * mt * t * t * p2x + t * t * t * p3x;
+          let sy = mt * mt * mt * p0y + 3 * mt * mt * t * p1y + 3 * mt * t * t * p2y + t * t * t * p3y;
+          // Tangent direction (bezier derivative)
+          const tx = 3 * mt * mt * (p1x - p0x) + 6 * mt * t * (p2x - p1x) + 3 * t * t * (p3x - p2x);
+          const ty = 3 * mt * mt * (p1y - p0y) + 6 * mt * t * (p2y - p1y) + 3 * t * t * (p3y - p2y);
+          const tLen = Math.hypot(tx, ty) || 1;
+          // Perpendicular wobble — stronger in middle, weaker at ends
+          const wobbleAmp = Math.sin(t * Math.PI) * 12; // Peaks at t=0.5
+          const wobble = Math.sin(globalTime * 0.06 + s * 0.8 + neck.ctrlPhase) * wobbleAmp;
+          sx += (-ty / tLen) * wobble;
+          sy += (tx / tLen) * wobble;
+          // Radius tapers: thicker near body, thinner toward head
+          const r = 12 - s * 0.5;
+          neck.segments.push({ x: sx, y: sy, r: Math.max(r, 6) });
+        }
       }
-      // Head regeneration
+
+      // --- Head regeneration ---
       for (let h = 0; h < 3; h++) {
         if (!b.heads[h].alive) {
           b.heads[h].regenTimer--;
           if (b.heads[h].regenTimer <= 0) {
-            // Regenerate head — stronger each time
             b.heads[h].alive = true;
             b.heads[h].regenCount++;
-            b.heads[h].maxHp = Math.floor(40 * (1 + 0.25 * b.heads[h].regenCount));
+            b.heads[h].maxHp = Math.floor(60 * (1 + 0.25 * b.heads[h].regenCount));
             b.heads[h].hp = b.heads[h].maxHp;
-            // Regen burst
             const hp = b.headPositions[h];
             fireCircle(hp.x, hp.y, 10, 2, b.heads[h].regenCount > 1 ? '#ff88ff' : '#cc44ff', 0);
             spawnParticles(hp.x, hp.y, '#cc44ff', 8, 3, 20, 3);
+            // Reset attack cooldown on regen
+            b.necks[h].attackCooldown = 120;
           }
         }
       }
-      // Check for synchronized sever — all 3 heads dead within 5s window
+
+      // --- Synchronized sever check ---
       if (b.headsAlive === 0 && !b.exposedActive) {
         const now = globalTime;
-        const allRecent = b.lastSeverTimes.every(t => now - t < 300); // 5 seconds at 60fps
+        const allRecent = b.lastSeverTimes.every(t => now - t < 300);
         if (allRecent) {
           b.exposedActive = true;
-          b.exposedTimer = 300; // 5 seconds
+          b.exposedTimer = 300;
           shakeTimer = 20; shakeIntensity = 8;
           spawnExplosion(b.x, b.y, '#ff44ff', false);
-          // Clear all bullets as reward
           enemyBullets.length = 0;
+          b.globs.length = 0; // Clear globs as reward too
+          b.beams.length = 0;
         }
       }
+
+      // --- Update persistent globs ---
+      for (let g = b.globs.length - 1; g >= 0; g--) {
+        const glob = b.globs[g];
+        glob.timer--;
+        glob.pulseTimer--;
+        if (glob.pulseTimer <= 0) {
+          glob.pulseTimer = 90;
+          fireCircle(glob.x, glob.y, 6, 1.8, '#bb44ff', Math.random() * Math.PI * 2);
+        }
+        if (glob.timer <= 0) b.globs.splice(g, 1);
+      }
+
+      // --- Update active beams ---
+      for (let i = b.beams.length - 1; i >= 0; i--) {
+        const beam = b.beams[i];
+        beam.timer++;
+        // Sweep angle from sweepStart to sweepEnd over maxTimer frames
+        const sweepT = Math.min(beam.timer / beam.maxTimer, 1);
+        beam.angle = beam.sweepStart + (beam.sweepEnd - beam.sweepStart) * sweepT;
+        // Update beam origin to track head position
+        const headPos = b.headPositions[beam.headIdx];
+        if (headPos) { beam.x = headPos.x; beam.y = headPos.y; }
+        if (beam.timer >= beam.maxTimer) b.beams.splice(i, 1);
+      }
+
       break;
     }
   }
@@ -2366,63 +2552,92 @@ function bossPattern7(b) {
   }
 }
 
-// VOID HYDRA: Three heads fire independently + combined rage
+// VOID HYDRA: Three heads with signature attacks — beam, breath, globs
 function bossPattern8(b) {
-  // No attacks during exposed state — body is vulnerable
   if (b.exposedActive) return;
-  const rate = b.phase === 2 ? 0.55 : b.phase === 1 ? 0.75 : 1;
-  // Enrage: fewer heads = faster attacks from survivors
-  const enrage = b.headsAlive === 3 ? 1.0 : b.headsAlive === 2 ? 0.7 : b.headsAlive === 1 ? 0.5 : 1.0;
-  const headColors = [COLORS.bulletRed, COLORS.bulletCyan, COLORS.bulletPurple];
+  const headColors = ['#ff4444', '#4488ff', '#cc44ff'];
   const hp = b.headPositions;
   const heads = b.heads;
 
-  // Head 1 (red): aimed rapid fire — after regen: triple shot
-  if (heads[0].alive && b.shootTimer % Math.floor(35 * rate * enrage) === 0) {
-    if (heads[0].regenCount > 0) {
-      // Upgraded: triple aimed shot
-      for (let i = -1; i <= 1; i++) {
-        const a = angleToward(hp[0], player) + i * 0.2;
-        enemyBullets.push({ x: hp[0].x, y: hp[0].y, vx: Math.cos(a) * (3 + b.phase * 0.3), vy: Math.sin(a) * (3 + b.phase * 0.3), size: 5, color: headColors[0], type: 'rice' });
+  for (let h = 0; h < 3; h++) {
+    if (!heads[h].alive) continue;
+    const neck = b.necks[h];
+
+    // Idle: light aimed shots to keep pressure (all heads)
+    if (neck.attackState === 'IDLE' && b.shootTimer % 50 === 0) {
+      fireAimed(hp[h].x, hp[h].y, 2.5 + b.phase * 0.3, headColors[h], 4);
+    }
+
+    // --- Signature attacks based on state machine ---
+    if (neck.attackState !== 'ATTACK') continue;
+
+    switch (heads[h].attackType) {
+      case 'beam': {
+        // Red head: sweeping beam — create beam on first frame, then it self-updates
+        if (neck.attackTimer === 1) {
+          const aimAngle = angleToward(hp[h], player);
+          const sweepDir = player.x > hp[h].x ? 1 : -1;
+          b.beams.push({
+            headIdx: h, x: hp[h].x, y: hp[h].y,
+            angle: aimAngle - sweepDir * 0.6,
+            sweepStart: aimAngle - sweepDir * 0.6,
+            sweepEnd: aimAngle + sweepDir * 0.6,
+            timer: 0, maxTimer: 110, width: 18,
+          });
+        }
+        // Scatter sparks along beam during attack
+        if (neck.attackTimer % 8 === 0) {
+          const beamAngle = b.beams.length > 0 ? b.beams[b.beams.length - 1].angle : 0;
+          const sparkDist = 80 + Math.random() * 200;
+          const sx = hp[h].x + Math.cos(beamAngle) * sparkDist;
+          const sy = hp[h].y + Math.sin(beamAngle) * sparkDist;
+          spawnParticles(sx, sy, '#ff6644', 3, 2, 10, 2);
+        }
+        break;
       }
-    } else {
-      fireAimed(hp[0].x, hp[0].y, 3 + b.phase * 0.3, headColors[0], 5);
-    }
-  }
-  // Head 2 (blue): ring bursts — after regen: double ring
-  if (heads[1].alive && b.shootTimer % Math.floor(60 * rate * enrage) === 0) {
-    fireCircle(hp[1].x, hp[1].y, 8 + b.phase * 2, 2, headColors[1], b.headAngles[1]);
-    if (heads[1].regenCount > 0) {
-      fireCircle(hp[1].x, hp[1].y, 8 + b.phase * 2, 1.3, headColors[1], b.headAngles[1] + Math.PI / 8);
-    }
-  }
-  // Head 3 (purple): fan spray — after regen: fan + homing center
-  if (heads[2].alive && b.shootTimer % Math.floor(45 * rate * enrage) === 0) {
-    fireFan(hp[2].x, hp[2].y, 4 + b.phase, 0.6, 2.5, headColors[2], angleToward(hp[2], player));
-    if (heads[2].regenCount > 0) {
-      fireAimed(hp[2].x, hp[2].y, 2.0, '#ff88ff', 6);
-    }
-  }
-  // Synchronized breath: all ALIVE heads fire together
-  if (b.phase >= 1 && b.shootTimer % Math.floor(80 * rate * enrage) === 0) {
-    for (let h = 0; h < 3; h++) {
-      if (!heads[h].alive) continue;
-      for (let i = 0; i < 3; i++) {
-        const a = angleToward(hp[h], player) + (i - 1) * 0.15;
-        enemyBullets.push({ x: hp[h].x, y: hp[h].y, vx: Math.cos(a) * 3.5, vy: Math.sin(a) * 3.5, size: 5, color: headColors[h], type: 'rice' });
+      case 'breath': {
+        // Blue head: cone breath — dense fan every 6 frames during attack
+        if (neck.attackTimer % 6 === 0) {
+          const breathAngle = angleToward(hp[h], player);
+          const count = 8 + b.phase * 2 + (heads[h].regenCount > 0 ? 3 : 0);
+          const spread = 0.9 + b.phase * 0.15;
+          fireFan(hp[h].x, hp[h].y, count, spread, 2.8 + b.phase * 0.3, headColors[h], breathAngle);
+        }
+        // Post-regen: add slow heavy bullets every 18 frames
+        if (heads[h].regenCount > 0 && neck.attackTimer % 18 === 0) {
+          const a = angleToward(hp[h], player) + (Math.random() - 0.5) * 0.4;
+          enemyBullets.push({ x: hp[h].x, y: hp[h].y, vx: Math.cos(a) * 1.5, vy: Math.sin(a) * 1.5, size: 8, color: '#88ccff', type: 'round' });
+        }
+        break;
+      }
+      case 'glob': {
+        // Purple head: spit 2-3 globs that become persistent area denial
+        if (neck.attackTimer === 1) {
+          const globCount = 2 + (b.phase >= 1 ? 1 : 0);
+          for (let g = 0; g < globCount; g++) {
+            // Aim at positions near the player, spread out
+            const tgtX = player.x + (g - (globCount - 1) / 2) * 80 + (Math.random() - 0.5) * 40;
+            const tgtY = player.y + (Math.random() - 0.5) * 60;
+            const clampX = Math.max(30, Math.min(W - 30, tgtX));
+            const clampY = Math.max(100, Math.min(H - 60, tgtY));
+            const a = Math.atan2(clampY - hp[h].y, clampX - hp[h].x);
+            enemyBullets.push({
+              x: hp[h].x, y: hp[h].y,
+              vx: Math.cos(a) * 2.2, vy: Math.sin(a) * 2.2,
+              size: 10, color: '#bb55ff', type: 'round',
+              isGlob: true, globTargetX: clampX, globTargetY: clampY,
+              globOwner: b, globDuration: (heads[h].regenCount > 0 ? 480 : 360),
+            });
+          }
+        }
+        break;
       }
     }
   }
-  // Phase 2: alive heads spiral
-  if (b.phase === 2 && b.shootTimer % Math.floor(100 * enrage) === 0) {
-    for (let h = 0; h < 3; h++) {
-      if (!heads[h].alive) continue;
-      fireSpiral(hp[h].x, hp[h].y, 2, 1.8, headColors[h], b.angle + h * 2, 4);
-    }
-  }
+
   // Body desperation: when 0 heads alive and NOT exposed, body fires rings
   if (b.headsAlive === 0 && !b.exposedActive && b.shootTimer % 40 === 0) {
-    fireCircle(b.x, b.y, 10, 2.5, '#cc44ff', b.angle);
+    fireCircle(b.x, b.y + 50, 10, 2.5, '#cc44ff', b.angle);
   }
 }
 
@@ -3794,91 +4009,206 @@ function drawMinibossExtras(b, drawW, drawH) {
       ctx.globalCompositeOperation = 'source-over';
       break;
     }
-    case 8: { // Hydra: neck chains + glowing heads + regen + exposed state
+    case 8: { // Hydra: massive body + serpent necks + glowing heads + beams + globs
       const hColors = ['#ff4444', '#4488ff', '#cc44ff'];
       const heads = b.heads;
+
+      // --- Draw body mass (partially clipped at top of screen) ---
+      // Large dark elliptical mass
+      const bodyW = 140, bodyH = 100;
+      ctx.globalCompositeOperation = 'source-over';
+      const bodyGrad = ctx.createRadialGradient(0, 10, 10, 0, 10, bodyW);
+      bodyGrad.addColorStop(0, '#442266');
+      bodyGrad.addColorStop(0.3, '#221133');
+      bodyGrad.addColorStop(0.7, '#110822');
+      bodyGrad.addColorStop(1, 'rgba(10, 4, 16, 0)');
+      ctx.fillStyle = bodyGrad;
+      ctx.beginPath(); ctx.ellipse(0, 10, bodyW, bodyH, 0, 0, Math.PI * 2); ctx.fill();
+      // Glowing anchor points where necks attach
+      ctx.globalCompositeOperation = 'lighter';
+      for (let h = 0; h < 3; h++) {
+        const neck = b.necks[h];
+        const ax = neck.anchorOfsX, ay = neck.anchorOfsY;
+        const pulse = 0.3 + Math.sin(t * 0.08 + h * 2) * 0.15;
+        const aGrad = ctx.createRadialGradient(ax, ay, 0, ax, ay, 20);
+        aGrad.addColorStop(0, hColors[h] + '66');
+        aGrad.addColorStop(1, hColors[h] + '00');
+        ctx.fillStyle = aGrad;
+        ctx.beginPath(); ctx.arc(ax, ay, 20 + pulse * 5, 0, Math.PI * 2); ctx.fill();
+      }
+
       // Exposed state: body glows intensely
       if (b.exposedActive) {
-        ctx.globalCompositeOperation = 'lighter';
         const pulse = 0.5 + Math.sin(t * 0.2) * 0.3;
-        const eGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 60);
+        const eGrad = ctx.createRadialGradient(0, 30, 0, 0, 30, 80);
         eGrad.addColorStop(0, `rgba(255, 100, 255, ${pulse})`);
         eGrad.addColorStop(0.5, `rgba(200, 68, 255, ${pulse * 0.3})`);
         eGrad.addColorStop(1, 'rgba(200, 68, 255, 0)');
         ctx.fillStyle = eGrad;
-        ctx.beginPath(); ctx.arc(0, 0, 60, 0, Math.PI * 2); ctx.fill();
-        ctx.globalCompositeOperation = 'source-over';
+        ctx.beginPath(); ctx.arc(0, 30, 80, 0, Math.PI * 2); ctx.fill();
       }
+
+      // --- Draw necks (bezier segment chains) — in world space ---
+      ctx.save();
+      ctx.translate(-b.x, -b.y); // Undo boss transform to draw in world coords
       for (let h = 0; h < 3; h++) {
-        const hp = b.headPositions[h];
-        const hx = hp.x - b.x;
-        const hy = hp.y - b.y;
+        const neck = b.necks[h];
         const head = heads[h];
+        const segs = neck.segments;
+        if (segs.length < 2) continue;
         const isAlive = head.alive;
         const isRegen = !isAlive && head.regenTimer > 0;
-        // Neck chain (6 circles from body to head)
+        const neckAlpha = isAlive ? 0.6 : (isRegen ? 0.3 : 0.15);
+        const isTelegraph = neck.attackState === 'TELEGRAPH';
+
+        // Connecting tissue (thick stroke along segments)
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = `rgba(${h === 0 ? '180,40,40' : h === 1 ? '40,100,200' : '160,40,200'}, ${neckAlpha * 0.7})`;
+        ctx.lineWidth = isAlive ? 10 : 5;
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(segs[0].x, segs[0].y);
+        for (let s = 1; s < segs.length; s++) ctx.lineTo(segs[s].x, segs[s].y);
+        ctx.stroke();
+
+        // Segment circles with glow
         ctx.globalCompositeOperation = 'lighter';
-        const neckSegments = isAlive ? 6 : (isRegen ? Math.ceil(6 * (1 - head.regenTimer / 480)) : 2);
-        for (let n = 1; n <= neckSegments; n++) {
-          const nt = n / 7;
-          const nx = hx * nt;
-          const ny = hy * nt;
-          const nWobble = Math.sin(t * 0.06 + h * 2 + n * 0.5) * (isAlive ? 3 : 5);
-          const nAlpha = isAlive ? 0x44 : 0x22;
-          ctx.fillStyle = hColors[h] + nAlpha.toString(16).padStart(2, '0');
-          ctx.beginPath();
-          ctx.arc(nx + nWobble, ny, isAlive ? 5 : 3, 0, Math.PI * 2);
-          ctx.fill();
+        for (let s = 0; s < segs.length; s++) {
+          const seg = segs[s];
+          const segAlpha = neckAlpha * (isTelegraph ? (0.8 + Math.sin(t * 0.2 + s) * 0.2) : 1.0);
+          // Alternating bright/dark for scale texture
+          const bright = s % 2 === 0;
+          ctx.fillStyle = hColors[h] + (bright ? Math.floor(segAlpha * 80).toString(16).padStart(2, '0') : Math.floor(segAlpha * 40).toString(16).padStart(2, '0'));
+          ctx.beginPath(); ctx.arc(seg.x, seg.y, seg.r, 0, Math.PI * 2); ctx.fill();
         }
+
+        // --- Draw head ---
+        const hx = neck.headX, hy = neck.headY;
         if (isAlive) {
-          // Living head glow — brightness based on HP
           const hpPct = head.hp / head.maxHp;
-          const glowSize = 18 + (head.regenCount * 3); // bigger after regen
+          const glowSize = 22 + (head.regenCount * 3);
           const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, glowSize);
-          hGrad.addColorStop(0, '#ffffffaa');
-          hGrad.addColorStop(0.3, hColors[h] + '88');
+          hGrad.addColorStop(0, '#ffffffbb');
+          hGrad.addColorStop(0.3, hColors[h] + 'aa');
           hGrad.addColorStop(1, hColors[h] + '00');
           ctx.fillStyle = hGrad;
           ctx.beginPath(); ctx.arc(hx, hy, glowSize, 0, Math.PI * 2); ctx.fill();
-          // Eyes
-          const eyeSpread = 4;
-          ctx.fillStyle = head.regenCount > 0 ? '#ff88ffcc' : '#ffffffcc';
+
+          // Telegraph charge-up glow
+          if (isTelegraph) {
+            const chargePct = neck.attackTimer / (head.attackType === 'beam' ? 90 : head.attackType === 'breath' ? 60 : 50);
+            const chargeR = glowSize + chargePct * 15;
+            const cGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, chargeR);
+            cGrad.addColorStop(0, `rgba(255,255,255,${0.3 * chargePct})`);
+            cGrad.addColorStop(0.5, hColors[h] + Math.floor(chargePct * 100).toString(16).padStart(2, '0'));
+            cGrad.addColorStop(1, hColors[h] + '00');
+            ctx.fillStyle = cGrad;
+            ctx.beginPath(); ctx.arc(hx, hy, chargeR, 0, Math.PI * 2); ctx.fill();
+
+            // Beam telegraph: thin aim line
+            if (head.attackType === 'beam') {
+              const aimAngle = angleToward({ x: hx, y: hy }, player);
+              ctx.globalCompositeOperation = 'source-over';
+              ctx.strokeStyle = `rgba(255, 80, 80, ${0.3 + chargePct * 0.5})`;
+              ctx.lineWidth = 1 + chargePct * 2;
+              ctx.setLineDash([6, 8]);
+              ctx.beginPath();
+              ctx.moveTo(hx, hy);
+              ctx.lineTo(hx + Math.cos(aimAngle) * 500, hy + Math.sin(aimAngle) * 500);
+              ctx.stroke();
+              ctx.setLineDash([]);
+              ctx.globalCompositeOperation = 'lighter';
+            }
+          }
+
+          // Eyes — positioned facing player
+          const eyeAngle = Math.atan2(player.y - hy, player.x - hx);
+          const eyeOfs = 3;
+          const ex1x = hx + Math.cos(eyeAngle - 0.5) * eyeOfs;
+          const ex1y = hy + Math.sin(eyeAngle - 0.5) * eyeOfs;
+          const ex2x = hx + Math.cos(eyeAngle + 0.5) * eyeOfs;
+          const ex2y = hy + Math.sin(eyeAngle + 0.5) * eyeOfs;
+          ctx.fillStyle = head.regenCount > 0 ? '#ff88ffdd' : '#ffffffdd';
           ctx.beginPath();
-          ctx.arc(hx - eyeSpread, hy - 2, 2, 0, Math.PI * 2);
-          ctx.arc(hx + eyeSpread, hy - 2, 2, 0, Math.PI * 2);
+          ctx.arc(ex1x, ex1y, 2.5, 0, Math.PI * 2);
+          ctx.arc(ex2x, ex2y, 2.5, 0, Math.PI * 2);
           ctx.fill();
-          // Head HP bar (small, above head)
+
+          // Head HP bar
           ctx.globalCompositeOperation = 'source-over';
-          const barW = 20, barH = 3;
-          const barX = hx - barW / 2, barY = hy - glowSize - 4;
+          const barW = 24, barH = 3;
+          const barX = hx - barW / 2, barY = hy - glowSize - 6;
           ctx.fillStyle = 'rgba(0,0,0,0.5)';
           ctx.fillRect(barX, barY, barW, barH);
           ctx.fillStyle = hColors[h];
           ctx.fillRect(barX, barY, barW * hpPct, barH);
           ctx.globalCompositeOperation = 'lighter';
         } else if (isRegen) {
-          // Regenerating stump — sparking, growing
           const regenPct = 1 - head.regenTimer / 480;
           const sparkAlpha = 0.3 + Math.sin(t * 0.15 + h) * 0.2;
-          const stumpR = 6 + regenPct * 12;
+          const stumpR = 6 + regenPct * 16;
           const sGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, stumpR);
           sGrad.addColorStop(0, `rgba(255, 150, 255, ${sparkAlpha})`);
           sGrad.addColorStop(1, hColors[h] + '00');
           ctx.fillStyle = sGrad;
           ctx.beginPath(); ctx.arc(hx, hy, stumpR, 0, Math.PI * 2); ctx.fill();
-          // Spark particles at stump
           if (Math.random() < 0.3) {
-            const sx = hx + (Math.random() - 0.5) * stumpR;
-            const sy = hy + (Math.random() - 0.5) * stumpR;
             ctx.fillStyle = '#ff88ff88';
-            ctx.beginPath(); ctx.arc(sx, sy, 1.5, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath();
+            ctx.arc(hx + (Math.random() - 0.5) * stumpR, hy + (Math.random() - 0.5) * stumpR, 1.5, 0, Math.PI * 2);
+            ctx.fill();
           }
         } else {
-          // Dead stump (no regen yet) — dark, sparking
           ctx.fillStyle = hColors[h] + '22';
           ctx.beginPath(); ctx.arc(hx, hy, 6, 0, Math.PI * 2); ctx.fill();
         }
       }
+
+      // --- Draw active beams ---
+      for (const beam of b.beams) {
+        const bx = beam.x, by = beam.y;
+        const beamLen = 600;
+        const endX = bx + Math.cos(beam.angle) * beamLen;
+        const endY = by + Math.sin(beam.angle) * beamLen;
+        // Core beam (bright)
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = 'rgba(255, 200, 200, 0.9)';
+        ctx.lineWidth = beam.width * 0.4;
+        ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(endX, endY); ctx.stroke();
+        // Outer glow
+        ctx.strokeStyle = `rgba(255, 80, 60, 0.4)`;
+        ctx.lineWidth = beam.width;
+        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(endX, endY); ctx.stroke();
+        // Wide feathered glow
+        ctx.strokeStyle = `rgba(255, 40, 30, 0.15)`;
+        ctx.lineWidth = beam.width * 2.5;
+        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(endX, endY); ctx.stroke();
+      }
+
+      // --- Draw persistent globs ---
+      for (const glob of b.globs) {
+        const fadeAlpha = glob.timer < 60 ? glob.timer / 60 : 1;
+        const pulseR = 18 + Math.sin(t * 0.1 + glob.x) * 4;
+        // Pool base
+        ctx.globalCompositeOperation = 'source-over';
+        const gGrad = ctx.createRadialGradient(glob.x, glob.y, 0, glob.x, glob.y, pulseR);
+        gGrad.addColorStop(0, `rgba(180, 60, 255, ${0.5 * fadeAlpha})`);
+        gGrad.addColorStop(0.6, `rgba(120, 30, 200, ${0.3 * fadeAlpha})`);
+        gGrad.addColorStop(1, `rgba(80, 20, 160, 0)`);
+        ctx.fillStyle = gGrad;
+        ctx.beginPath(); ctx.arc(glob.x, glob.y, pulseR, 0, Math.PI * 2); ctx.fill();
+        // Bubble particles
+        ctx.globalCompositeOperation = 'lighter';
+        if (Math.random() < 0.4 * fadeAlpha) {
+          const bx2 = glob.x + (Math.random() - 0.5) * pulseR;
+          const by2 = glob.y + (Math.random() - 0.5) * pulseR;
+          ctx.fillStyle = `rgba(200, 120, 255, ${0.4 * fadeAlpha})`;
+          ctx.beginPath(); ctx.arc(bx2, by2, 1.5 + Math.random() * 2, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+
+      ctx.restore(); // Restore from world-space transform
       ctx.globalCompositeOperation = 'source-over';
       break;
     }
@@ -3910,18 +4240,23 @@ function getMinibossHitCircles(b) {
       }
       return sc;
     }
-    case 8: { // Hydra: heads when alive, body when exposed/headless
+    case 8: { // Hydra: heads + neck segments (reduced dmg) + body when exposed
       const hc = [];
       let anyHead = false;
       for (let h = 0; h < 3; h++) {
         if (b.heads[h].alive) {
+          // Head circle — full damage target
           hc.push({ x: b.headPositions[h].x, y: b.headPositions[h].y, r: 20, part: 'head', headIdx: h });
           anyHead = true;
+          // Neck segments — reduced damage, skip first 2 segments (too close to body)
+          const segs = b.necks[h].segments;
+          for (let s = 2; s < segs.length; s++) {
+            hc.push({ x: segs[s].x, y: segs[s].y, r: segs[s].r, part: 'neck', headIdx: h });
+          }
         }
       }
       if (!anyHead) {
-        // No heads alive — body is targetable (exposed or waiting for regen)
-        hc.push({ x: b.x, y: b.y, r: 35, part: 'body' });
+        hc.push({ x: b.x, y: b.y + 40, r: 50, part: 'body' });
       }
       return hc;
     }
@@ -3950,21 +4285,24 @@ function drawBoss(b) {
   const drawH = b.isMiniboss ? (b.renderH || b.h * 3.2) : b.h * 2;
   const pulse = Math.sin(globalTime * 0.1) * 3;
 
-  // Boss aura glow
-  ctx.globalCompositeOperation = 'lighter';
-  const auraR = drawW * 0.8 + pulse;
-  const aGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, auraR);
-  aGrad.addColorStop(0, b.color + '44');
-  aGrad.addColorStop(0.5, b.color + '11');
-  aGrad.addColorStop(1, b.color + '00');
-  ctx.fillStyle = aGrad;
-  ctx.fillRect(-auraR, -auraR, auraR * 2, auraR * 2);
-  ctx.globalCompositeOperation = 'source-over';
+  // Boss aura glow (skip for Hydra — body has its own glow in extras)
+  if (b.type !== 8) {
+    ctx.globalCompositeOperation = 'lighter';
+    const auraR = drawW * 0.8 + pulse;
+    const aGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, auraR);
+    aGrad.addColorStop(0, b.color + '44');
+    aGrad.addColorStop(0.5, b.color + '11');
+    aGrad.addColorStop(1, b.color + '00');
+    ctx.fillStyle = aGrad;
+    ctx.fillRect(-auraR, -auraR, auraR * 2, auraR * 2);
+    ctx.globalCompositeOperation = 'source-over';
+  }
 
   // Draw miniboss-specific visual extras (body segments, tentacles, etc.)
   if (b.isMiniboss) drawMinibossExtras(b, drawW, drawH);
 
-  if (sprite) {
+  // Skip default sprite for Hydra (type 8) — body rendered programmatically in extras
+  if (sprite && b.type !== 8) {
     const wobble = Math.sin(globalTime * 0.08) * 0.05;
     // Serpent: rotate sprite to face heading direction (sprite art faces up, heading 0 = right)
     if (b.type === 6 && b.heading !== undefined) {
@@ -4007,8 +4345,8 @@ function drawBoss(b) {
         ctx.globalCompositeOperation = 'source-over';
       }
     }
-  } else {
-    // Fallback: programmatic boss
+  } else if (b.type !== 8) {
+    // Fallback: programmatic boss (skip for Hydra — body in extras)
     ctx.fillStyle = isFlash ? '#ffffff' : b.color;
     const s = b.w / 2;
     ctx.beginPath();
@@ -4022,8 +4360,8 @@ function drawBoss(b) {
   // HP bar
   const hpFrac = b.hp / b.maxHp;
   if (b.isMiniboss) {
-    if (b.type === 6) {
-      // Serpent: fixed HP bar at top (roams freely, so tracking bar would be jittery)
+    if (b.type === 6 || b.type === 8) {
+      // Serpent & Hydra: fixed HP bar at top (body near top edge)
       const mBarW = W - 120, mBarH = 5;
       const mBarX = 60, mBarY = 18;
       ctx.fillStyle = '#33333388';
@@ -5458,6 +5796,13 @@ function update() {
   for (const b of enemyBullets) {
     if (b.delay && b.delay > 0) { b.delay--; continue; }
     b.x += b.vx * dt; b.y += b.vy * dt;
+    // Hydra glob landing: convert to persistent pool when near target
+    if (b.isGlob && b.globOwner && Math.hypot(b.x - b.globTargetX, b.y - b.globTargetY) < 20) {
+      b.globOwner.globs.push({ x: b.x, y: b.y, timer: b.globDuration, maxTimer: b.globDuration, pulseTimer: 60 });
+      spawnParticles(b.x, b.y, '#bb55ff', 8, 3, 15, 2);
+      shakeTimer = 3; shakeIntensity = 2;
+      b.x = -999; // Remove bullet
+    }
   }
   enemyBullets = enemyBullets.filter(b => b.x > -30 && b.x < W + 30 && b.y > -30 && b.y < H + 30);
 
@@ -5582,21 +5927,19 @@ function update() {
           boss.hp -= b.damage * coreMult;
           boss.flash = 2;
           if (boss.vulnerabilityActive) boss.vulnerabilityDmgAccum += b.damage;
-        // Hydra: route damage to individual heads or body
+        // Hydra: route damage to heads, necks (reduced), or body
         } else if (boss.type === 8 && hitCircle && hitCircle.part === 'head') {
           const head = boss.heads[hitCircle.headIdx];
           head.hp -= b.damage;
-          boss.hp -= b.damage * 0.5; // Head hits also drain main HP
+          boss.hp -= b.damage * 0.5;
           if (head.hp <= 0 && head.alive) {
-            // Sever head!
             head.alive = false;
             head.hp = 0;
-            head.regenTimer = 480; // 8 seconds to regenerate
+            head.regenTimer = 480;
             boss.lastSeverTimes[hitCircle.headIdx] = globalTime;
             const hp = boss.headPositions[hitCircle.headIdx];
             spawnExplosion(hp.x, hp.y, hitCircle.headIdx === 0 ? '#ff4444' : hitCircle.headIdx === 1 ? '#4488ff' : '#cc44ff', false);
             shakeTimer = 8; shakeIntensity = 4;
-            // Rage burst from remaining alive heads
             for (let oh = 0; oh < 3; oh++) {
               if (boss.heads[oh].alive) {
                 const ohp = boss.headPositions[oh];
@@ -5605,8 +5948,24 @@ function update() {
             }
           }
           boss.flash = 2;
+        } else if (boss.type === 8 && hitCircle && hitCircle.part === 'neck') {
+          // Neck hit: 25% damage to head, 10% to body — necks are tough
+          const head = boss.heads[hitCircle.headIdx];
+          if (head.alive) {
+            head.hp -= b.damage * 0.25;
+            // Neck damage can sever a head too
+            if (head.hp <= 0) {
+              head.alive = false; head.hp = 0;
+              head.regenTimer = 480;
+              boss.lastSeverTimes[hitCircle.headIdx] = globalTime;
+              const shp = boss.headPositions[hitCircle.headIdx];
+              spawnExplosion(shp.x, shp.y, ['#ff4444','#4488ff','#cc44ff'][hitCircle.headIdx], false);
+              shakeTimer = 6; shakeIntensity = 3;
+            }
+          }
+          boss.hp -= b.damage * 0.1;
+          boss.flash = 1;
         } else if (boss.type === 8) {
-          // Body hit (headless) — bonus when exposed
           const dmgMult = boss.exposedActive ? 3.0 : 1.0;
           boss.hp -= b.damage * dmgMult; boss.flash = 2;
         } else if (boss.type === 5) {
@@ -5771,6 +6130,46 @@ function update() {
         spawnExplosion(p.x, p.y, '#ffffff', true);
         enemyBullets = [];
         break;
+      }
+    }
+  }
+
+  // Collision: Hydra beams -> player
+  if (p.alive && p.invincible <= 0) {
+    for (const boss of bosses) {
+      if (!boss.alive || boss.type !== 8) continue;
+      for (const beam of boss.beams) {
+        // Point-to-line distance from player to beam
+        const cosA = Math.cos(beam.angle), sinA = Math.sin(beam.angle);
+        const dx = p.x - beam.x, dy = p.y - beam.y;
+        const proj = dx * cosA + dy * sinA; // Projection along beam direction
+        if (proj < 0) continue; // Behind the beam origin
+        const perpDist = Math.abs(dx * sinA - dy * cosA);
+        if (perpDist < beam.width / 2 + p.hitboxRadius) {
+          p.hp--; p.alive = false; p.deathAnim = 0;
+          levelDamageTaken++; levelDeaths++;
+          shakeTimer = 20; shakeIntensity = 10;
+          spawnExplosion(p.x, p.y, '#ff4444', true);
+          enemyBullets = [];
+          break;
+        }
+      }
+    }
+  }
+
+  // Collision: Hydra glob pools -> player
+  if (p.alive && p.invincible <= 0) {
+    for (const boss of bosses) {
+      if (!boss.alive || boss.type !== 8) continue;
+      for (const glob of boss.globs) {
+        if (dist(glob, p) < 16 + p.hitboxRadius) {
+          p.hp--; p.alive = false; p.deathAnim = 0;
+          levelDamageTaken++; levelDeaths++;
+          shakeTimer = 15; shakeIntensity = 6;
+          spawnExplosion(p.x, p.y, '#bb55ff', true);
+          enemyBullets = [];
+          break;
+        }
       }
     }
   }
