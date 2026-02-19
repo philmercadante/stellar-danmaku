@@ -538,6 +538,479 @@ function preprocessMinibossSprites() {
   }
 }
 
+// ---- GENERATE HYDRA SPRITES (programmatic pixel art) ----
+function generateHydraSprites() {
+  // --- Body mass sprite: massive organic dark mass with veins and eye markings ---
+  const bodyW = 320, bodyH = 200;
+  const bodyC = document.createElement('canvas');
+  bodyC.width = bodyW; bodyC.height = bodyH;
+  const bc = bodyC.getContext('2d');
+  const bMidX = bodyW / 2, bMidY = bodyH / 2;
+
+  // Base mass — irregular dark shape built from overlapping ellipses
+  bc.globalCompositeOperation = 'source-over';
+  const masses = [
+    { x: bMidX, y: bMidY + 10, rx: 140, ry: 80, c1: '#1a0a2e', c2: '#0d0518' },
+    { x: bMidX - 50, y: bMidY - 10, rx: 90, ry: 60, c1: '#221040', c2: '#110822' },
+    { x: bMidX + 50, y: bMidY - 10, rx: 90, ry: 60, c1: '#221040', c2: '#110822' },
+    { x: bMidX, y: bMidY + 30, rx: 110, ry: 50, c1: '#180830', c2: '#0a0416' },
+    { x: bMidX - 30, y: bMidY + 40, rx: 60, ry: 35, c1: '#2a1248', c2: '#0d0518' },
+    { x: bMidX + 30, y: bMidY + 40, rx: 60, ry: 35, c1: '#2a1248', c2: '#0d0518' },
+  ];
+  for (const m of masses) {
+    const g = bc.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.rx);
+    g.addColorStop(0, m.c1);
+    g.addColorStop(0.7, m.c2);
+    g.addColorStop(1, 'rgba(10,4,20,0)');
+    bc.fillStyle = g;
+    bc.beginPath(); bc.ellipse(m.x, m.y, m.rx, m.ry, 0, 0, Math.PI * 2); bc.fill();
+  }
+
+  // Armored plate highlights — layered ridges
+  bc.globalCompositeOperation = 'lighter';
+  const ridges = [
+    { x: bMidX, y: bMidY - 20, rx: 120, ry: 30 },
+    { x: bMidX - 40, y: bMidY + 5, rx: 70, ry: 20 },
+    { x: bMidX + 40, y: bMidY + 5, rx: 70, ry: 20 },
+    { x: bMidX, y: bMidY + 35, rx: 80, ry: 15 },
+  ];
+  for (const r of ridges) {
+    const g = bc.createRadialGradient(r.x, r.y - 5, 0, r.x, r.y, r.rx);
+    g.addColorStop(0, 'rgba(80, 40, 120, 0.15)');
+    g.addColorStop(0.5, 'rgba(60, 30, 100, 0.06)');
+    g.addColorStop(1, 'rgba(40, 20, 80, 0)');
+    bc.fillStyle = g;
+    bc.beginPath(); bc.ellipse(r.x, r.y, r.rx, r.ry, 0, 0, Math.PI * 2); bc.fill();
+  }
+
+  // Veins — branching lines from anchor points
+  bc.globalCompositeOperation = 'lighter';
+  const anchors = [
+    { x: bMidX - 55, y: bMidY + 55, color: 'rgba(255,68,68,0.12)' },
+    { x: bMidX, y: bMidY + 65, color: 'rgba(68,136,255,0.12)' },
+    { x: bMidX + 55, y: bMidY + 55, color: 'rgba(204,68,255,0.12)' },
+  ];
+  for (const a of anchors) {
+    for (let v = 0; v < 8; v++) {
+      const angle = (v / 8) * Math.PI * 2 + (a.x > bMidX ? 0.3 : a.x < bMidX ? -0.3 : 0);
+      const len = 40 + Math.sin(v * 2.3) * 25;
+      bc.strokeStyle = a.color;
+      bc.lineWidth = 1.5 - v * 0.1;
+      bc.beginPath();
+      bc.moveTo(a.x, a.y);
+      const cpx = a.x + Math.cos(angle) * len * 0.6 + Math.sin(v * 1.7) * 15;
+      const cpy = a.y + Math.sin(angle) * len * 0.6 + Math.cos(v * 2.1) * 10;
+      const ex = a.x + Math.cos(angle) * len;
+      const ey = a.y + Math.sin(angle) * len;
+      bc.quadraticCurveTo(cpx, cpy, ex, ey);
+      bc.stroke();
+      // Branch
+      if (v % 2 === 0) {
+        bc.lineWidth = 0.8;
+        bc.beginPath();
+        bc.moveTo(cpx, cpy);
+        bc.lineTo(cpx + Math.cos(angle + 0.8) * 15, cpy + Math.sin(angle + 0.8) * 15);
+        bc.stroke();
+      }
+    }
+  }
+
+  // Eye markings — 2 large eye shapes on the body
+  bc.globalCompositeOperation = 'source-over';
+  const eyes = [{ x: bMidX - 35, y: bMidY - 5 }, { x: bMidX + 35, y: bMidY - 5 }];
+  for (const eye of eyes) {
+    // Eye socket (dark indent)
+    const sockG = bc.createRadialGradient(eye.x, eye.y, 0, eye.x, eye.y, 18);
+    sockG.addColorStop(0, 'rgba(0,0,0,0.4)');
+    sockG.addColorStop(0.6, 'rgba(20,5,30,0.2)');
+    sockG.addColorStop(1, 'rgba(20,5,30,0)');
+    bc.fillStyle = sockG;
+    bc.beginPath(); bc.ellipse(eye.x, eye.y, 18, 12, 0, 0, Math.PI * 2); bc.fill();
+    // Iris glow
+    bc.globalCompositeOperation = 'lighter';
+    const irisG = bc.createRadialGradient(eye.x, eye.y, 0, eye.x, eye.y, 10);
+    irisG.addColorStop(0, 'rgba(180,60,255,0.25)');
+    irisG.addColorStop(0.4, 'rgba(120,30,200,0.15)');
+    irisG.addColorStop(1, 'rgba(80,20,150,0)');
+    bc.fillStyle = irisG;
+    bc.beginPath(); bc.ellipse(eye.x, eye.y, 12, 8, 0, 0, Math.PI * 2); bc.fill();
+    // Pupil slit
+    bc.globalCompositeOperation = 'source-over';
+    bc.fillStyle = 'rgba(0,0,0,0.5)';
+    bc.beginPath(); bc.ellipse(eye.x, eye.y, 2, 7, 0, 0, Math.PI * 2); bc.fill();
+    // Catch light
+    bc.globalCompositeOperation = 'lighter';
+    bc.fillStyle = 'rgba(255,200,255,0.3)';
+    bc.beginPath(); bc.arc(eye.x - 2, eye.y - 3, 2, 0, Math.PI * 2); bc.fill();
+    bc.globalCompositeOperation = 'source-over';
+  }
+
+  // Small eye cluster in center (third eye)
+  bc.globalCompositeOperation = 'lighter';
+  const thirdG = bc.createRadialGradient(bMidX, bMidY - 20, 0, bMidX, bMidY - 20, 8);
+  thirdG.addColorStop(0, 'rgba(255,100,255,0.3)');
+  thirdG.addColorStop(1, 'rgba(200,50,200,0)');
+  bc.fillStyle = thirdG;
+  bc.beginPath(); bc.arc(bMidX, bMidY - 20, 8, 0, Math.PI * 2); bc.fill();
+
+  // Tentacle-like protrusions from edges
+  bc.globalCompositeOperation = 'source-over';
+  const tentAngles = [-2.8, -2.4, -0.7, -0.3, 3.0, 3.4, 0.3, 0.7];
+  for (const ta of tentAngles) {
+    const tx = bMidX + Math.cos(ta) * 110;
+    const ty = bMidY + Math.sin(ta) * 55;
+    const tipX = tx + Math.cos(ta) * 30;
+    const tipY = ty + Math.sin(ta) * 20;
+    bc.strokeStyle = 'rgba(30,15,50,0.6)';
+    bc.lineWidth = 4;
+    bc.lineCap = 'round';
+    bc.beginPath();
+    bc.moveTo(tx, ty);
+    bc.quadraticCurveTo(tx + Math.cos(ta) * 15, ty + Math.sin(ta) * 15 + 5, tipX, tipY);
+    bc.stroke();
+    bc.lineWidth = 2;
+    bc.strokeStyle = 'rgba(60,30,90,0.3)';
+    bc.stroke();
+  }
+
+  // Edge fade to transparent
+  const edgeData = bc.getImageData(0, 0, bodyW, bodyH);
+  const ed = edgeData.data;
+  for (let y = 0; y < bodyH; y++) {
+    for (let x = 0; x < bodyW; x++) {
+      const dx = (x - bMidX) / (bodyW * 0.45);
+      const dy = (y - bMidY) / (bodyH * 0.45);
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 0.7) {
+        const fade = Math.max(0, 1 - (dist - 0.7) / 0.3);
+        const i = (y * bodyW + x) * 4;
+        ed[i + 3] = Math.floor(ed[i + 3] * fade);
+      }
+    }
+  }
+  bc.putImageData(edgeData, 0, 0);
+  img['hydraBody'] = bodyC;
+
+  // --- Head sprites: 3 distinct shapes ---
+  const headSize = 64;
+  const headColors = [
+    { name: 'hydraHeadRed', base: '#cc2222', mid: '#ff4444', hi: '#ff8888', glow: 'rgba(255,80,60,', accent: '#ffaa44' },
+    { name: 'hydraHeadBlue', base: '#1144aa', mid: '#4488ff', hi: '#88bbff', glow: 'rgba(60,120,255,', accent: '#44ffff' },
+    { name: 'hydraHeadPurple', base: '#6622aa', mid: '#cc44ff', hi: '#ee88ff', glow: 'rgba(180,60,255,', accent: '#ff88ff' },
+  ];
+  for (let hi = 0; hi < 3; hi++) {
+    const hc = document.createElement('canvas');
+    hc.width = headSize; hc.height = headSize;
+    const hx = hc.getContext('2d');
+    const cx = headSize / 2, cy = headSize / 2;
+    const col = headColors[hi];
+
+    if (hi === 0) {
+      // RED — Beam head: angular, slit-eyed, focused
+      // Tapered diamond shape
+      hx.fillStyle = col.base;
+      hx.beginPath();
+      hx.moveTo(cx, cy - 22); // top
+      hx.lineTo(cx + 16, cy - 6);
+      hx.lineTo(cx + 12, cy + 14);
+      hx.lineTo(cx, cy + 22); // bottom
+      hx.lineTo(cx - 12, cy + 14);
+      hx.lineTo(cx - 16, cy - 6);
+      hx.closePath();
+      hx.fill();
+      // Inner shading
+      const ig = hx.createRadialGradient(cx, cy - 4, 0, cx, cy, 18);
+      ig.addColorStop(0, col.mid + 'aa');
+      ig.addColorStop(0.5, col.base + '88');
+      ig.addColorStop(1, 'rgba(0,0,0,0)');
+      hx.fillStyle = ig;
+      hx.beginPath();
+      hx.moveTo(cx, cy - 20);
+      hx.lineTo(cx + 14, cy - 4);
+      hx.lineTo(cx + 10, cy + 12);
+      hx.lineTo(cx, cy + 20);
+      hx.lineTo(cx - 10, cy + 12);
+      hx.lineTo(cx - 14, cy - 4);
+      hx.closePath();
+      hx.fill();
+      // Armored ridges
+      hx.strokeStyle = 'rgba(255,120,80,0.2)';
+      hx.lineWidth = 1;
+      for (let r = 0; r < 4; r++) {
+        const ry = cy - 12 + r * 7;
+        hx.beginPath();
+        hx.moveTo(cx - 12 + r * 2, ry);
+        hx.quadraticCurveTo(cx, ry - 2, cx + 12 - r * 2, ry);
+        hx.stroke();
+      }
+      // Central energy slit (beam emitter)
+      hx.globalCompositeOperation = 'lighter';
+      const slitG = hx.createLinearGradient(cx, cy - 10, cx, cy + 10);
+      slitG.addColorStop(0, 'rgba(255,200,150,0)');
+      slitG.addColorStop(0.3, 'rgba(255,200,150,0.4)');
+      slitG.addColorStop(0.5, 'rgba(255,255,220,0.6)');
+      slitG.addColorStop(0.7, 'rgba(255,200,150,0.4)');
+      slitG.addColorStop(1, 'rgba(255,200,150,0)');
+      hx.fillStyle = slitG;
+      hx.beginPath(); hx.ellipse(cx, cy, 2.5, 10, 0, 0, Math.PI * 2); hx.fill();
+      // Two smaller side markings
+      hx.fillStyle = col.glow + '0.15)';
+      hx.beginPath(); hx.arc(cx - 8, cy - 4, 3, 0, Math.PI * 2); hx.fill();
+      hx.beginPath(); hx.arc(cx + 8, cy - 4, 3, 0, Math.PI * 2); hx.fill();
+    } else if (hi === 1) {
+      // BLUE — Breath head: wide jaw, fangs, frost mist
+      // Wide rounded trapezoid
+      hx.fillStyle = col.base;
+      hx.beginPath();
+      hx.moveTo(cx - 10, cy - 20);
+      hx.lineTo(cx + 10, cy - 20);
+      hx.quadraticCurveTo(cx + 22, cy - 10, cx + 20, cy + 4);
+      hx.lineTo(cx + 16, cy + 18);
+      hx.lineTo(cx - 16, cy + 18);
+      hx.lineTo(cx - 20, cy + 4);
+      hx.quadraticCurveTo(cx - 22, cy - 10, cx - 10, cy - 20);
+      hx.closePath();
+      hx.fill();
+      // Inner glow
+      const ig2 = hx.createRadialGradient(cx, cy - 2, 0, cx, cy, 20);
+      ig2.addColorStop(0, col.mid + '99');
+      ig2.addColorStop(0.6, col.base + '66');
+      ig2.addColorStop(1, 'rgba(0,0,0,0)');
+      hx.fillStyle = ig2;
+      hx.fill();
+      // Jaw opening — dark gap with inner glow
+      hx.fillStyle = 'rgba(0,0,10,0.6)';
+      hx.beginPath();
+      hx.moveTo(cx - 10, cy + 8);
+      hx.lineTo(cx + 10, cy + 8);
+      hx.lineTo(cx + 6, cy + 18);
+      hx.lineTo(cx - 6, cy + 18);
+      hx.closePath();
+      hx.fill();
+      // Jaw inner frost glow
+      hx.globalCompositeOperation = 'lighter';
+      const jawG = hx.createRadialGradient(cx, cy + 14, 0, cx, cy + 14, 10);
+      jawG.addColorStop(0, 'rgba(100,220,255,0.4)');
+      jawG.addColorStop(1, 'rgba(60,150,255,0)');
+      hx.fillStyle = jawG;
+      hx.beginPath(); hx.arc(cx, cy + 14, 10, 0, Math.PI * 2); hx.fill();
+      hx.globalCompositeOperation = 'source-over';
+      // Fang teeth
+      hx.fillStyle = '#ddeeff';
+      const fangs = [[-8, 8, -6, 15], [-3, 8, -2, 13], [3, 8, 2, 13], [8, 8, 6, 15]];
+      for (const [fx, fy, tx, ty] of fangs) {
+        hx.beginPath();
+        hx.moveTo(cx + fx - 1.5, cy + fy);
+        hx.lineTo(cx + tx, cy + ty);
+        hx.lineTo(cx + fx + 1.5, cy + fy);
+        hx.closePath();
+        hx.fill();
+      }
+      // Eyes — wide-set, cold
+      hx.globalCompositeOperation = 'lighter';
+      hx.fillStyle = col.glow + '0.35)';
+      hx.beginPath(); hx.ellipse(cx - 8, cy - 6, 4, 3, -0.2, 0, Math.PI * 2); hx.fill();
+      hx.beginPath(); hx.ellipse(cx + 8, cy - 6, 4, 3, 0.2, 0, Math.PI * 2); hx.fill();
+      // Pupils
+      hx.globalCompositeOperation = 'source-over';
+      hx.fillStyle = '#001133';
+      hx.beginPath(); hx.arc(cx - 8, cy - 6, 1.5, 0, Math.PI * 2); hx.fill();
+      hx.beginPath(); hx.arc(cx + 8, cy - 6, 1.5, 0, Math.PI * 2); hx.fill();
+    } else {
+      // PURPLE — Glob head: bulbous, dripping, organic
+      // Large bulb shape
+      hx.fillStyle = col.base;
+      hx.beginPath();
+      hx.arc(cx, cy - 4, 20, 0, Math.PI * 2);
+      hx.fill();
+      // Lower drip bulge
+      hx.beginPath();
+      hx.ellipse(cx, cy + 10, 14, 12, 0, 0, Math.PI * 2);
+      hx.fill();
+      // Inner toxic glow
+      const ig3 = hx.createRadialGradient(cx, cy, 0, cx, cy, 22);
+      ig3.addColorStop(0, col.mid + 'bb');
+      ig3.addColorStop(0.4, col.base + '88');
+      ig3.addColorStop(1, 'rgba(30,10,50,0)');
+      hx.fillStyle = ig3;
+      hx.beginPath(); hx.arc(cx, cy - 2, 20, 0, Math.PI * 2); hx.fill();
+      // Bubble/pustule markings
+      const pustules = [[cx - 8, cy - 10, 4], [cx + 10, cy - 2, 3.5], [cx - 6, cy + 6, 3], [cx + 5, cy + 12, 2.5], [cx - 12, cy + 2, 2.5]];
+      for (const [px, py, pr] of pustules) {
+        const pg = hx.createRadialGradient(px - 1, py - 1, 0, px, py, pr);
+        pg.addColorStop(0, 'rgba(220,120,255,0.3)');
+        pg.addColorStop(0.5, 'rgba(160,60,220,0.15)');
+        pg.addColorStop(1, 'rgba(100,30,160,0)');
+        hx.fillStyle = pg;
+        hx.beginPath(); hx.arc(px, py, pr, 0, Math.PI * 2); hx.fill();
+        // Specular highlight
+        hx.globalCompositeOperation = 'lighter';
+        hx.fillStyle = 'rgba(255,200,255,0.2)';
+        hx.beginPath(); hx.arc(px - 1, py - 1, pr * 0.4, 0, Math.PI * 2); hx.fill();
+        hx.globalCompositeOperation = 'source-over';
+      }
+      // Dripping tendrils from bottom
+      hx.strokeStyle = 'rgba(120,40,180,0.5)';
+      hx.lineWidth = 2;
+      hx.lineCap = 'round';
+      const drips = [[-6, 18, -8, 28], [0, 20, 2, 30], [6, 18, 8, 26]];
+      for (const [dx, dy, ex, ey] of drips) {
+        hx.beginPath();
+        hx.moveTo(cx + dx, cy + dy);
+        hx.quadraticCurveTo(cx + dx + 1, cy + dy + 4, cx + ex, cy + ey);
+        hx.stroke();
+        // Drip tip
+        hx.fillStyle = 'rgba(180,80,255,0.4)';
+        hx.beginPath(); hx.arc(cx + ex, cy + ey, 2, 0, Math.PI * 2); hx.fill();
+      }
+      // Eyes — multiple small eyes, unsettling
+      hx.globalCompositeOperation = 'lighter';
+      const eyePos = [[cx - 6, cy - 10], [cx + 6, cy - 10], [cx, cy - 14], [cx - 10, cy - 4], [cx + 10, cy - 4]];
+      for (let ei = 0; ei < eyePos.length; ei++) {
+        const [ex, ey] = eyePos[ei];
+        const er = ei < 2 ? 2.5 : 1.5;
+        hx.fillStyle = col.glow + '0.3)';
+        hx.beginPath(); hx.arc(ex, ey, er, 0, Math.PI * 2); hx.fill();
+      }
+    }
+
+    hx.globalCompositeOperation = 'source-over';
+    // Edge soften — fade edges to transparent
+    const hData = hx.getImageData(0, 0, headSize, headSize);
+    const hd = hData.data;
+    for (let y = 0; y < headSize; y++) {
+      for (let x = 0; x < headSize; x++) {
+        const dx = (x - cx) / (headSize * 0.42);
+        const dy = (y - cy) / (headSize * 0.42);
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 0.8) {
+          const fade = Math.max(0, 1 - (dist - 0.8) / 0.2);
+          const i = (y * headSize + x) * 4;
+          hd[i + 3] = Math.floor(hd[i + 3] * fade);
+        }
+      }
+    }
+    hx.putImageData(hData, 0, 0);
+    img[col.name] = hc;
+  }
+
+  // --- Neck segment sprites: one per color with scale texture ---
+  const segSize = 32;
+  const segColors = [
+    { name: 'hydraSegRed', dark: '#661515', mid: '#aa2828', hi: '#cc4444', vein: 'rgba(255,100,80,0.15)' },
+    { name: 'hydraSegBlue', dark: '#0a2860', mid: '#1e5599', hi: '#3388cc', vein: 'rgba(80,180,255,0.15)' },
+    { name: 'hydraSegPurple', dark: '#3a1260', mid: '#6b2e99', hi: '#9944cc', vein: 'rgba(200,100,255,0.15)' },
+  ];
+  for (let si = 0; si < 3; si++) {
+    const sc = document.createElement('canvas');
+    sc.width = segSize; sc.height = segSize;
+    const sx = sc.getContext('2d');
+    const scx = segSize / 2, scy = segSize / 2;
+    const col = segColors[si];
+
+    // Base circle with gradient
+    const sg = sx.createRadialGradient(scx - 2, scy - 3, 0, scx, scy, 14);
+    sg.addColorStop(0, col.hi);
+    sg.addColorStop(0.4, col.mid);
+    sg.addColorStop(0.8, col.dark);
+    sg.addColorStop(1, 'rgba(0,0,0,0)');
+    sx.fillStyle = sg;
+    sx.beginPath(); sx.arc(scx, scy, 14, 0, Math.PI * 2); sx.fill();
+
+    // Scale overlay — crescent highlight on top
+    sx.globalCompositeOperation = 'lighter';
+    sx.strokeStyle = col.vein;
+    sx.lineWidth = 8;
+    sx.beginPath();
+    sx.arc(scx, scy + 4, 10, Math.PI * 1.2, Math.PI * 1.8);
+    sx.stroke();
+
+    // Specular
+    sx.fillStyle = 'rgba(255,255,255,0.08)';
+    sx.beginPath(); sx.ellipse(scx - 2, scy - 5, 6, 3, -0.2, 0, Math.PI * 2); sx.fill();
+
+    // Dark underside
+    sx.globalCompositeOperation = 'source-over';
+    sx.fillStyle = 'rgba(0,0,0,0.15)';
+    sx.beginPath(); sx.ellipse(scx, scy + 5, 10, 5, 0, 0, Math.PI * 2); sx.fill();
+
+    // Edge fade
+    const sData = sx.getImageData(0, 0, segSize, segSize);
+    const sd = sData.data;
+    for (let y = 0; y < segSize; y++) {
+      for (let x = 0; x < segSize; x++) {
+        const dx = (x - scx) / 14;
+        const dy = (y - scy) / 14;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 0.85) {
+          const fade = Math.max(0, 1 - (dist - 0.85) / 0.15);
+          const i = (y * segSize + x) * 4;
+          sd[i + 3] = Math.floor(sd[i + 3] * fade);
+        }
+      }
+    }
+    sx.putImageData(sData, 0, 0);
+    img[col.name] = sc;
+  }
+
+  // --- Glob pool sprite: toxic puddle with surface detail ---
+  const globSize = 64;
+  const globC = document.createElement('canvas');
+  globC.width = globSize; globC.height = globSize;
+  const gx = globC.getContext('2d');
+  const gcx = globSize / 2, gcy = globSize / 2;
+
+  // Irregular pool shape
+  gx.fillStyle = '#2a0845';
+  gx.beginPath();
+  for (let a = 0; a < Math.PI * 2; a += 0.1) {
+    const r = 24 + Math.sin(a * 3.7) * 4 + Math.cos(a * 5.3) * 3;
+    const px = gcx + Math.cos(a) * r;
+    const py = gcy + Math.sin(a) * r;
+    if (a === 0) gx.moveTo(px, py); else gx.lineTo(px, py);
+  }
+  gx.closePath();
+  gx.fill();
+
+  // Inner glow
+  const poolG = gx.createRadialGradient(gcx, gcy, 0, gcx, gcy, 26);
+  poolG.addColorStop(0, 'rgba(180,80,255,0.6)');
+  poolG.addColorStop(0.5, 'rgba(120,40,200,0.3)');
+  poolG.addColorStop(1, 'rgba(60,20,120,0)');
+  gx.globalCompositeOperation = 'lighter';
+  gx.fillStyle = poolG;
+  gx.beginPath(); gx.arc(gcx, gcy, 26, 0, Math.PI * 2); gx.fill();
+
+  // Surface bubbles (pre-baked positions)
+  const bubbles = [[gcx - 8, gcy - 6, 3], [gcx + 6, gcy - 3, 2.5], [gcx - 3, gcy + 8, 2], [gcx + 10, gcy + 4, 2], [gcx - 10, gcy + 2, 1.5]];
+  for (const [bx, by, br] of bubbles) {
+    const bg = gx.createRadialGradient(bx, by, 0, bx, by, br);
+    bg.addColorStop(0, 'rgba(255,200,255,0.3)');
+    bg.addColorStop(0.5, 'rgba(200,120,255,0.15)');
+    bg.addColorStop(1, 'rgba(150,60,220,0)');
+    gx.fillStyle = bg;
+    gx.beginPath(); gx.arc(bx, by, br, 0, Math.PI * 2); gx.fill();
+  }
+
+  // Edge fade
+  const gData = gx.getImageData(0, 0, globSize, globSize);
+  const gd = gData.data;
+  for (let y = 0; y < globSize; y++) {
+    for (let x = 0; x < globSize; x++) {
+      const dx = (x - gcx) / 28;
+      const dy = (y - gcy) / 28;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 0.8) {
+        const fade = Math.max(0, 1 - (dist - 0.8) / 0.2);
+        const i = (y * globSize + x) * 4;
+        gd[i + 3] = Math.floor(gd[i + 3] * fade);
+      }
+    }
+  }
+  gx.putImageData(gData, 0, 0);
+  img['hydraGlob'] = globC;
+}
+
 // ---- SHIP CONFIGURATIONS ----
 const SHIP_CONFIGS = [
   {
@@ -4009,48 +4482,79 @@ function drawMinibossExtras(b, drawW, drawH) {
       ctx.globalCompositeOperation = 'source-over';
       break;
     }
-    case 8: { // Hydra: massive body + serpent necks + glowing heads + beams + globs
+    case 8: { // Hydra: sprite-based body + textured necks + detailed heads + beams + globs
       const hColors = ['#ff4444', '#4488ff', '#cc44ff'];
+      const hColorRGB = ['180,60,60', '60,120,200', '160,60,200'];
+      const headSpriteKeys = ['hydraHeadRed', 'hydraHeadBlue', 'hydraHeadPurple'];
+      const segSpriteKeys = ['hydraSegRed', 'hydraSegBlue', 'hydraSegPurple'];
       const heads = b.heads;
+      const bodySprite = img['hydraBody'];
+      const globSprite = img['hydraGlob'];
 
-      // --- Draw body mass (partially clipped at top of screen) ---
-      // Large dark elliptical mass
-      const bodyW = 140, bodyH = 100;
+      // --- Draw body mass using pre-rendered sprite ---
       ctx.globalCompositeOperation = 'source-over';
-      const bodyGrad = ctx.createRadialGradient(0, 10, 10, 0, 10, bodyW);
-      bodyGrad.addColorStop(0, '#442266');
-      bodyGrad.addColorStop(0.3, '#221133');
-      bodyGrad.addColorStop(0.7, '#110822');
-      bodyGrad.addColorStop(1, 'rgba(10, 4, 16, 0)');
-      ctx.fillStyle = bodyGrad;
-      ctx.beginPath(); ctx.ellipse(0, 10, bodyW, bodyH, 0, 0, Math.PI * 2); ctx.fill();
-      // Glowing anchor points where necks attach
+      if (bodySprite) {
+        const bsW = 320, bsH = 200;
+        // Subtle breathing animation
+        const breathe = 1 + Math.sin(t * 0.04) * 0.015;
+        ctx.save();
+        ctx.scale(breathe, breathe);
+        ctx.drawImage(bodySprite, -bsW / 2, -bsH / 2 + 10, bsW, bsH);
+        ctx.restore();
+      }
+
+      // Glowing anchor points where necks attach (animated pulse over sprite)
       ctx.globalCompositeOperation = 'lighter';
       for (let h = 0; h < 3; h++) {
         const neck = b.necks[h];
         const ax = neck.anchorOfsX, ay = neck.anchorOfsY;
-        const pulse = 0.3 + Math.sin(t * 0.08 + h * 2) * 0.15;
-        const aGrad = ctx.createRadialGradient(ax, ay, 0, ax, ay, 20);
-        aGrad.addColorStop(0, hColors[h] + '66');
-        aGrad.addColorStop(1, hColors[h] + '00');
+        const pulse = 0.4 + Math.sin(t * 0.08 + h * 2.1) * 0.2;
+        const aR = 22 + pulse * 6;
+        const aGrad = ctx.createRadialGradient(ax, ay, 0, ax, ay, aR);
+        aGrad.addColorStop(0, `rgba(${hColorRGB[h]}, ${pulse * 0.7})`);
+        aGrad.addColorStop(0.5, `rgba(${hColorRGB[h]}, ${pulse * 0.25})`);
+        aGrad.addColorStop(1, `rgba(${hColorRGB[h]}, 0)`);
         ctx.fillStyle = aGrad;
-        ctx.beginPath(); ctx.arc(ax, ay, 20 + pulse * 5, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(ax, ay, aR, 0, Math.PI * 2); ctx.fill();
+        // Energy tendrils from anchor downward
+        if (heads[h].alive) {
+          ctx.strokeStyle = `rgba(${hColorRGB[h]}, ${pulse * 0.15})`;
+          ctx.lineWidth = 1.5;
+          for (let v = 0; v < 3; v++) {
+            const va = -Math.PI * 0.3 + v * Math.PI * 0.3 + Math.sin(t * 0.05 + h + v) * 0.2;
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.quadraticCurveTo(ax + Math.cos(va) * 15, ay + Math.sin(va) * 15, ax + Math.cos(va) * 30, ay + Math.sin(va) * 25);
+            ctx.stroke();
+          }
+        }
       }
 
-      // Exposed state: body glows intensely
+      // Exposed state: body glows intensely with pulsing overlay
       if (b.exposedActive) {
         const pulse = 0.5 + Math.sin(t * 0.2) * 0.3;
-        const eGrad = ctx.createRadialGradient(0, 30, 0, 0, 30, 80);
-        eGrad.addColorStop(0, `rgba(255, 100, 255, ${pulse})`);
-        eGrad.addColorStop(0.5, `rgba(200, 68, 255, ${pulse * 0.3})`);
-        eGrad.addColorStop(1, 'rgba(200, 68, 255, 0)');
+        const eGrad = ctx.createRadialGradient(0, 30, 0, 0, 30, 90);
+        eGrad.addColorStop(0, `rgba(255, 120, 255, ${pulse * 0.8})`);
+        eGrad.addColorStop(0.3, `rgba(200, 68, 255, ${pulse * 0.4})`);
+        eGrad.addColorStop(0.7, `rgba(150, 40, 200, ${pulse * 0.15})`);
+        eGrad.addColorStop(1, 'rgba(100, 20, 150, 0)');
         ctx.fillStyle = eGrad;
-        ctx.beginPath(); ctx.arc(0, 30, 80, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(0, 30, 90, 0, Math.PI * 2); ctx.fill();
+        // Crackle energy lines
+        for (let c = 0; c < 5; c++) {
+          const ca = (c / 5) * Math.PI * 2 + t * 0.03;
+          ctx.strokeStyle = `rgba(255, 200, 255, ${0.3 + Math.sin(t * 0.3 + c) * 0.15})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(ca) * 20, 30 + Math.sin(ca) * 20);
+          ctx.lineTo(Math.cos(ca) * 60 + Math.sin(t * 0.1 + c) * 10, 30 + Math.sin(ca) * 50);
+          ctx.stroke();
+        }
       }
 
-      // --- Draw necks (bezier segment chains) — in world space ---
+      // --- Draw necks and heads in world space ---
       ctx.save();
-      ctx.translate(-b.x, -b.y); // Undo boss transform to draw in world coords
+      ctx.translate(-b.x, -b.y);
       for (let h = 0; h < 3; h++) {
         const neck = b.necks[h];
         const head = heads[h];
@@ -4058,54 +4562,117 @@ function drawMinibossExtras(b, drawW, drawH) {
         if (segs.length < 2) continue;
         const isAlive = head.alive;
         const isRegen = !isAlive && head.regenTimer > 0;
-        const neckAlpha = isAlive ? 0.6 : (isRegen ? 0.3 : 0.15);
+        const neckAlpha = isAlive ? 1.0 : (isRegen ? 0.5 : 0.2);
         const isTelegraph = neck.attackState === 'TELEGRAPH';
+        const segSprite = img[segSpriteKeys[h]];
 
-        // Connecting tissue (thick stroke along segments)
+        // Connecting tissue — dark body-colored spine along all segments
         ctx.globalCompositeOperation = 'source-over';
-        ctx.strokeStyle = `rgba(${h === 0 ? '180,40,40' : h === 1 ? '40,100,200' : '160,40,200'}, ${neckAlpha * 0.7})`;
-        ctx.lineWidth = isAlive ? 10 : 5;
+        const spineW = isAlive ? 8 : 4;
+        ctx.strokeStyle = `rgba(${hColorRGB[h]}, ${neckAlpha * 0.4})`;
+        ctx.lineWidth = spineW;
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
         ctx.beginPath();
         ctx.moveTo(segs[0].x, segs[0].y);
         for (let s = 1; s < segs.length; s++) ctx.lineTo(segs[s].x, segs[s].y);
         ctx.stroke();
+        // Darker inner spine
+        ctx.strokeStyle = `rgba(0,0,0, ${neckAlpha * 0.2})`;
+        ctx.lineWidth = spineW * 0.4;
+        ctx.beginPath();
+        ctx.moveTo(segs[0].x, segs[0].y);
+        for (let s = 1; s < segs.length; s++) ctx.lineTo(segs[s].x, segs[s].y);
+        ctx.stroke();
 
-        // Segment circles with glow
-        ctx.globalCompositeOperation = 'lighter';
-        for (let s = 0; s < segs.length; s++) {
+        // Segment sprites — drawn tail-to-head so head overlaps
+        for (let s = segs.length - 1; s >= 0; s--) {
           const seg = segs[s];
-          const segAlpha = neckAlpha * (isTelegraph ? (0.8 + Math.sin(t * 0.2 + s) * 0.2) : 1.0);
-          // Alternating bright/dark for scale texture
-          const bright = s % 2 === 0;
-          ctx.fillStyle = hColors[h] + (bright ? Math.floor(segAlpha * 80).toString(16).padStart(2, '0') : Math.floor(segAlpha * 40).toString(16).padStart(2, '0'));
-          ctx.beginPath(); ctx.arc(seg.x, seg.y, seg.r, 0, Math.PI * 2); ctx.fill();
+          const segScale = seg.r / 14; // sprites are 14px radius base
+          const telFlicker = isTelegraph ? (0.85 + Math.sin(t * 0.25 + s * 0.7) * 0.15) : 1.0;
+          ctx.save();
+          ctx.translate(seg.x, seg.y);
+          // Rotate segment to face next segment
+          if (s < segs.length - 1) {
+            const ns = segs[s + 1];
+            ctx.rotate(Math.atan2(ns.y - seg.y, ns.x - seg.x));
+          } else if (s > 0) {
+            const ps = segs[s - 1];
+            ctx.rotate(Math.atan2(seg.y - ps.y, seg.x - ps.x));
+          }
+          ctx.globalAlpha = neckAlpha * telFlicker;
+          if (segSprite) {
+            const drawR = 32 * segScale;
+            ctx.drawImage(segSprite, -drawR / 2, -drawR / 2, drawR, drawR);
+            // Additive glow pass for energy feel
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.globalAlpha = neckAlpha * 0.2 * telFlicker;
+            ctx.drawImage(segSprite, -drawR / 2, -drawR / 2, drawR, drawR);
+            ctx.globalCompositeOperation = 'source-over';
+          } else {
+            ctx.fillStyle = hColors[h];
+            ctx.beginPath(); ctx.arc(0, 0, seg.r, 0, Math.PI * 2); ctx.fill();
+          }
+          ctx.globalAlpha = 1;
+          ctx.restore();
         }
 
         // --- Draw head ---
         const hx = neck.headX, hy = neck.headY;
+        const headSprite = img[headSpriteKeys[h]];
         if (isAlive) {
           const hpPct = head.hp / head.maxHp;
-          const glowSize = 22 + (head.regenCount * 3);
-          const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, glowSize);
-          hGrad.addColorStop(0, '#ffffffbb');
-          hGrad.addColorStop(0.3, hColors[h] + 'aa');
-          hGrad.addColorStop(1, hColors[h] + '00');
+          const glowSize = 24 + (head.regenCount * 3);
+          const headDrawSize = glowSize * 2.8;
+
+          // Outer glow aura
+          ctx.globalCompositeOperation = 'lighter';
+          const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, glowSize * 1.3);
+          hGrad.addColorStop(0, `rgba(${hColorRGB[h]}, 0.3)`);
+          hGrad.addColorStop(0.5, `rgba(${hColorRGB[h]}, 0.1)`);
+          hGrad.addColorStop(1, `rgba(${hColorRGB[h]}, 0)`);
           ctx.fillStyle = hGrad;
-          ctx.beginPath(); ctx.arc(hx, hy, glowSize, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx, hy, glowSize * 1.3, 0, Math.PI * 2); ctx.fill();
 
-          // Telegraph charge-up glow
+          // Head sprite — rotated to face player
+          const headAngle = Math.atan2(player.y - hy, player.x - hx);
+          ctx.save();
+          ctx.translate(hx, hy);
+          ctx.rotate(headAngle + Math.PI / 2); // sprite faces "up" naturally
+          ctx.globalCompositeOperation = 'source-over';
+          if (headSprite) {
+            ctx.drawImage(headSprite, -headDrawSize / 2, -headDrawSize / 2, headDrawSize, headDrawSize);
+            // Additive glow boost
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.globalAlpha = 0.3;
+            ctx.drawImage(headSprite, -headDrawSize / 2, -headDrawSize / 2, headDrawSize, headDrawSize);
+            ctx.globalAlpha = 1;
+          } else {
+            // Fallback glow
+            ctx.fillStyle = hColors[h];
+            ctx.beginPath(); ctx.arc(0, 0, glowSize * 0.7, 0, Math.PI * 2); ctx.fill();
+          }
+          ctx.restore();
+
+          // Telegraph charge-up effect
           if (isTelegraph) {
-            const chargePct = neck.attackTimer / (head.attackType === 'beam' ? 90 : head.attackType === 'breath' ? 60 : 50);
-            const chargeR = glowSize + chargePct * 15;
-            const cGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, chargeR);
-            cGrad.addColorStop(0, `rgba(255,255,255,${0.3 * chargePct})`);
-            cGrad.addColorStop(0.5, hColors[h] + Math.floor(chargePct * 100).toString(16).padStart(2, '0'));
-            cGrad.addColorStop(1, hColors[h] + '00');
-            ctx.fillStyle = cGrad;
-            ctx.beginPath(); ctx.arc(hx, hy, chargeR, 0, Math.PI * 2); ctx.fill();
+            const chargePct = Math.min(1, neck.attackTimer / (head.attackType === 'beam' ? 90 : head.attackType === 'breath' ? 60 : 50));
+            const chargeR = glowSize + chargePct * 18;
+            ctx.globalCompositeOperation = 'lighter';
+            // Spinning charge particles
+            for (let cp = 0; cp < 6; cp++) {
+              const cpa = (cp / 6) * Math.PI * 2 + t * 0.15 * (1 + chargePct);
+              const cpDist = chargeR * (1 - chargePct * 0.4);
+              const cpx = hx + Math.cos(cpa) * cpDist;
+              const cpy = hy + Math.sin(cpa) * cpDist;
+              ctx.fillStyle = `rgba(255,255,255,${chargePct * 0.4})`;
+              ctx.beginPath(); ctx.arc(cpx, cpy, 1.5 + chargePct * 1.5, 0, Math.PI * 2); ctx.fill();
+            }
+            // Growing energy ring
+            ctx.strokeStyle = `rgba(${hColorRGB[h]}, ${chargePct * 0.5})`;
+            ctx.lineWidth = 1.5 + chargePct * 2;
+            ctx.beginPath(); ctx.arc(hx, hy, chargeR, 0, Math.PI * 2); ctx.stroke();
 
-            // Beam telegraph: thin aim line
+            // Beam telegraph: dashed aim line with pulsing glow
             if (head.attackType === 'beam') {
               const aimAngle = angleToward({ x: hx, y: hy }, player);
               ctx.globalCompositeOperation = 'source-over';
@@ -4117,95 +4684,139 @@ function drawMinibossExtras(b, drawW, drawH) {
               ctx.lineTo(hx + Math.cos(aimAngle) * 500, hy + Math.sin(aimAngle) * 500);
               ctx.stroke();
               ctx.setLineDash([]);
+              // Glow along aim line
               ctx.globalCompositeOperation = 'lighter';
+              ctx.strokeStyle = `rgba(255, 100, 80, ${chargePct * 0.15})`;
+              ctx.lineWidth = 6 + chargePct * 8;
+              ctx.beginPath();
+              ctx.moveTo(hx, hy);
+              ctx.lineTo(hx + Math.cos(aimAngle) * 200, hy + Math.sin(aimAngle) * 200);
+              ctx.stroke();
             }
           }
 
-          // Eyes — positioned facing player
-          const eyeAngle = Math.atan2(player.y - hy, player.x - hx);
-          const eyeOfs = 3;
-          const ex1x = hx + Math.cos(eyeAngle - 0.5) * eyeOfs;
-          const ex1y = hy + Math.sin(eyeAngle - 0.5) * eyeOfs;
-          const ex2x = hx + Math.cos(eyeAngle + 0.5) * eyeOfs;
-          const ex2y = hy + Math.sin(eyeAngle + 0.5) * eyeOfs;
-          ctx.fillStyle = head.regenCount > 0 ? '#ff88ffdd' : '#ffffffdd';
-          ctx.beginPath();
-          ctx.arc(ex1x, ex1y, 2.5, 0, Math.PI * 2);
-          ctx.arc(ex2x, ex2y, 2.5, 0, Math.PI * 2);
-          ctx.fill();
-
           // Head HP bar
           ctx.globalCompositeOperation = 'source-over';
-          const barW = 24, barH = 3;
-          const barX = hx - barW / 2, barY = hy - glowSize - 6;
-          ctx.fillStyle = 'rgba(0,0,0,0.5)';
-          ctx.fillRect(barX, barY, barW, barH);
+          const barW = 28, barH = 3;
+          const barX = hx - barW / 2, barY = hy - glowSize - 10;
+          ctx.fillStyle = 'rgba(0,0,0,0.6)';
+          ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
           ctx.fillStyle = hColors[h];
           ctx.fillRect(barX, barY, barW * hpPct, barH);
-          ctx.globalCompositeOperation = 'lighter';
+          // HP bar border
+          ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+          ctx.lineWidth = 0.5;
+          ctx.strokeRect(barX - 1, barY - 1, barW + 2, barH + 2);
         } else if (isRegen) {
+          // Regenerating: growing stump with swirling particles
           const regenPct = 1 - head.regenTimer / 480;
-          const sparkAlpha = 0.3 + Math.sin(t * 0.15 + h) * 0.2;
-          const stumpR = 6 + regenPct * 16;
+          const stumpR = 6 + regenPct * 18;
+          ctx.globalCompositeOperation = 'lighter';
+          // Swirling regen particles
+          for (let rp = 0; rp < 8; rp++) {
+            const rpa = (rp / 8) * Math.PI * 2 + t * 0.1;
+            const rpDist = stumpR * (0.5 + regenPct * 0.5);
+            const rpx = hx + Math.cos(rpa) * rpDist;
+            const rpy = hy + Math.sin(rpa) * rpDist;
+            ctx.fillStyle = `rgba(255, 150, 255, ${0.2 + regenPct * 0.3})`;
+            ctx.beginPath(); ctx.arc(rpx, rpy, 1 + regenPct * 1.5, 0, Math.PI * 2); ctx.fill();
+          }
+          // Core stump glow
           const sGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, stumpR);
-          sGrad.addColorStop(0, `rgba(255, 150, 255, ${sparkAlpha})`);
-          sGrad.addColorStop(1, hColors[h] + '00');
+          sGrad.addColorStop(0, `rgba(255, 180, 255, ${0.3 + regenPct * 0.3})`);
+          sGrad.addColorStop(0.5, `rgba(${hColorRGB[h]}, ${0.2 * regenPct})`);
+          sGrad.addColorStop(1, `rgba(${hColorRGB[h]}, 0)`);
           ctx.fillStyle = sGrad;
           ctx.beginPath(); ctx.arc(hx, hy, stumpR, 0, Math.PI * 2); ctx.fill();
-          if (Math.random() < 0.3) {
-            ctx.fillStyle = '#ff88ff88';
-            ctx.beginPath();
-            ctx.arc(hx + (Math.random() - 0.5) * stumpR, hy + (Math.random() - 0.5) * stumpR, 1.5, 0, Math.PI * 2);
-            ctx.fill();
+          // Faint head sprite preview at high regen%
+          if (regenPct > 0.6 && headSprite) {
+            ctx.globalAlpha = (regenPct - 0.6) * 0.5;
+            const prevSize = stumpR * 2.5;
+            ctx.drawImage(headSprite, hx - prevSize / 2, hy - prevSize / 2, prevSize, prevSize);
+            ctx.globalAlpha = 1;
           }
         } else {
-          ctx.fillStyle = hColors[h] + '22';
-          ctx.beginPath(); ctx.arc(hx, hy, 6, 0, Math.PI * 2); ctx.fill();
+          // Dead stump — dim ember
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.fillStyle = `rgba(${hColorRGB[h]}, 0.08)`;
+          ctx.beginPath(); ctx.arc(hx, hy, 8, 0, Math.PI * 2); ctx.fill();
         }
       }
 
-      // --- Draw active beams ---
+      // --- Draw active beams (enhanced with edge particles) ---
       for (const beam of b.beams) {
         const bx = beam.x, by = beam.y;
         const beamLen = 600;
         const endX = bx + Math.cos(beam.angle) * beamLen;
         const endY = by + Math.sin(beam.angle) * beamLen;
-        // Core beam (bright)
         ctx.globalCompositeOperation = 'lighter';
-        ctx.strokeStyle = 'rgba(255, 200, 200, 0.9)';
-        ctx.lineWidth = beam.width * 0.4;
+        // Widest feathered outer glow
+        ctx.strokeStyle = 'rgba(255, 30, 20, 0.1)';
+        ctx.lineWidth = beam.width * 3;
         ctx.lineCap = 'round';
         ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(endX, endY); ctx.stroke();
         // Outer glow
-        ctx.strokeStyle = `rgba(255, 80, 60, 0.4)`;
-        ctx.lineWidth = beam.width;
+        ctx.strokeStyle = 'rgba(255, 80, 60, 0.35)';
+        ctx.lineWidth = beam.width * 1.2;
         ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(endX, endY); ctx.stroke();
-        // Wide feathered glow
-        ctx.strokeStyle = `rgba(255, 40, 30, 0.15)`;
-        ctx.lineWidth = beam.width * 2.5;
+        // Core beam (bright white-pink)
+        ctx.strokeStyle = 'rgba(255, 210, 200, 0.9)';
+        ctx.lineWidth = beam.width * 0.35;
         ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(endX, endY); ctx.stroke();
+        // Edge spark particles along beam
+        const perp = beam.angle + Math.PI / 2;
+        for (let sp = 0; sp < 8; sp++) {
+          const dist = 30 + sp * 60 + Math.sin(t * 0.3 + sp) * 20;
+          const side = (sp % 2 === 0 ? 1 : -1) * (beam.width * 0.5 + Math.random() * 4);
+          const sx = bx + Math.cos(beam.angle) * dist + Math.cos(perp) * side;
+          const sy = by + Math.sin(beam.angle) * dist + Math.sin(perp) * side;
+          ctx.fillStyle = `rgba(255, ${150 + sp * 10}, ${100 + sp * 15}, ${0.5 - sp * 0.04})`;
+          ctx.beginPath(); ctx.arc(sx, sy, 1 + Math.random() * 1.5, 0, Math.PI * 2); ctx.fill();
+        }
+        // Emitter flare at beam origin
+        const emG = ctx.createRadialGradient(bx, by, 0, bx, by, beam.width * 1.5);
+        emG.addColorStop(0, 'rgba(255,255,220,0.6)');
+        emG.addColorStop(0.5, 'rgba(255,120,80,0.2)');
+        emG.addColorStop(1, 'rgba(255,60,40,0)');
+        ctx.fillStyle = emG;
+        ctx.beginPath(); ctx.arc(bx, by, beam.width * 1.5, 0, Math.PI * 2); ctx.fill();
       }
 
-      // --- Draw persistent globs ---
+      // --- Draw persistent globs (sprite-based with animated surface) ---
       for (const glob of b.globs) {
         const fadeAlpha = glob.timer < 60 ? glob.timer / 60 : 1;
-        const pulseR = 18 + Math.sin(t * 0.1 + glob.x) * 4;
-        // Pool base
+        const pulseScale = 1 + Math.sin(t * 0.1 + glob.x * 0.1) * 0.15;
+        const drawSize = 42 * pulseScale;
         ctx.globalCompositeOperation = 'source-over';
-        const gGrad = ctx.createRadialGradient(glob.x, glob.y, 0, glob.x, glob.y, pulseR);
-        gGrad.addColorStop(0, `rgba(180, 60, 255, ${0.5 * fadeAlpha})`);
-        gGrad.addColorStop(0.6, `rgba(120, 30, 200, ${0.3 * fadeAlpha})`);
-        gGrad.addColorStop(1, `rgba(80, 20, 160, 0)`);
-        ctx.fillStyle = gGrad;
-        ctx.beginPath(); ctx.arc(glob.x, glob.y, pulseR, 0, Math.PI * 2); ctx.fill();
-        // Bubble particles
-        ctx.globalCompositeOperation = 'lighter';
-        if (Math.random() < 0.4 * fadeAlpha) {
-          const bx2 = glob.x + (Math.random() - 0.5) * pulseR;
-          const by2 = glob.y + (Math.random() - 0.5) * pulseR;
-          ctx.fillStyle = `rgba(200, 120, 255, ${0.4 * fadeAlpha})`;
-          ctx.beginPath(); ctx.arc(bx2, by2, 1.5 + Math.random() * 2, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = fadeAlpha;
+        if (globSprite) {
+          ctx.drawImage(globSprite, glob.x - drawSize / 2, glob.y - drawSize / 2, drawSize, drawSize);
+          // Animated glow overlay
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.globalAlpha = fadeAlpha * (0.15 + Math.sin(t * 0.15 + glob.y * 0.1) * 0.1);
+          ctx.drawImage(globSprite, glob.x - drawSize / 2, glob.y - drawSize / 2, drawSize, drawSize);
+        } else {
+          const gGrad = ctx.createRadialGradient(glob.x, glob.y, 0, glob.x, glob.y, 18);
+          gGrad.addColorStop(0, `rgba(180, 60, 255, ${0.5 * fadeAlpha})`);
+          gGrad.addColorStop(0.6, `rgba(120, 30, 200, ${0.3 * fadeAlpha})`);
+          gGrad.addColorStop(1, 'rgba(80, 20, 160, 0)');
+          ctx.fillStyle = gGrad;
+          ctx.beginPath(); ctx.arc(glob.x, glob.y, 18, 0, Math.PI * 2); ctx.fill();
         }
+        // Animated rising bubbles
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = fadeAlpha;
+        if (Math.random() < 0.5) {
+          const bx2 = glob.x + (Math.random() - 0.5) * drawSize * 0.7;
+          const by2 = glob.y - Math.random() * 8;
+          const br2 = 1 + Math.random() * 2;
+          const bg = ctx.createRadialGradient(bx2, by2, 0, bx2, by2, br2);
+          bg.addColorStop(0, 'rgba(220,160,255,0.5)');
+          bg.addColorStop(1, 'rgba(180,80,255,0)');
+          ctx.fillStyle = bg;
+          ctx.beginPath(); ctx.arc(bx2, by2, br2, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
       }
 
       ctx.restore(); // Restore from world-space transform
@@ -6460,6 +7071,7 @@ async function init() {
   initBackground();
   await loadAllAssets();
   preprocessMinibossSprites();
+  generateHydraSprites();
   assetsLoaded = true;
   document.getElementById('loading-screen').style.display = 'none';
   document.getElementById('title-screen').style.display = 'flex';
