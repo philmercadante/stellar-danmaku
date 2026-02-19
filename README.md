@@ -73,6 +73,20 @@ Waves combine these in formations — a tank escorted by grunts, a screen full o
 
 Bosses scale with wave number — if you loop past wave 15, the bosses repeat but with more HP and denser patterns.
 
+### Minibosses
+
+Minibosses appear throughout campaign levels and Boss Fight mode. Each has a **signature mechanic** that demands a different player skill — not just different bullet patterns, but fundamentally different ways of fighting.
+
+**DRIFT JELLYFISH** — *The Phase Shifter.* Drifts across the entire arena in graceful lissajous curves, trailing slow-falling bullet rain behind its path. Periodically phases out — becoming translucent and invulnerable — then reappears elsewhere with a burst of bullets. You need spatial awareness: track where it's been (the trail is dangerous), predict where it'll reappear, and pour damage during its solid windows. *(Tests: spatial awareness, pathfinding)*
+
+**IRON SCARAB** — *The Berserker.* Telegraphs a charge aimed at the player, then launches in any direction — bouncing off walls like a billiard ball up to 3 times. Each impact slam creates a persistent crater that pulses bullet rings every 1.5 seconds. Wings fold during charges (smaller hitbox, 50% armor) and spread during hover (vulnerable, wider target). Multiple charges mean multiple craters — the arena gets progressively more dangerous. *(Tests: positioning, pressure management)*
+
+**NEBULA SERPENT** — *The Moldorm.* A segmented snake boss with a trailing body that follows its head through a ring buffer of position history. Charges, rotates, and wall-bounces with an AI state machine. Every body segment is independently hittable along the entire undulating chain. The head leads while 7 body segments slither behind with tapered radii and connected tissue. *(Tests: tracking, spatial reading)*
+
+**PLASMA SENTINEL** — *The Fortress.* Four orbiting shield orbs physically block your bullets — they absorb hits and must be destroyed or shot around. Each shield covers a 45° arc, and the rotation speed increases as shields are destroyed. Periodically opens a vulnerability window where shields stop rotating and the core glows bright — burst DPS during these windows is rewarded with extended openings. Destroying all shields triggers an exposed fury mode. *(Tests: timing, precision)*
+
+**VOID HYDRA** — *The Regenerator.* Three independently-targetable heads, each with its own HP pool. Sever a head and the remaining heads enrage — firing faster with wider sweeps. But severed heads regenerate after 8 seconds, coming back 25% stronger each time. The intended strategy: damage all 3 heads evenly, then burst them down within a 5-second window to trigger the exposed state (3x damage to the body, bullet clear reward). *(Tests: target prioritization, burst timing)*
+
 ---
 
 ## The Visuals
@@ -100,7 +114,7 @@ Auto-fire is always on. FOCUS and BOMB are dedicated buttons in the bottom-right
 
 ## Technical Details
 
-- **Single HTML file** — All game code lives in `index.html` (~1900 lines of JS)
+- **Single HTML file** — All game code lives in `index.html` (~5700 lines of JS)
 - **Node server** — `server.js` is a minimal static file server (serves assets from `/assets/`)
 - **Canvas** — 480x720 internal resolution, scaled to fit any screen
 - **No frameworks** — Vanilla JS, requestAnimationFrame game loop
@@ -119,22 +133,21 @@ node server.js
 
 This is a working foundation. Here are some directions worth exploring:
 
-**Gameplay**
-- More enemy types (shielded enemies, teleporters, enemies that split on death)
+**Recently Added**
+- 3 selectable ships with different shot types and speeds
+- Campaign mode with structured levels and star ratings
+- Roguelike powerup system (20 powerups across 4 rarity tiers, offered between waves)
+- 5 unique minibosses with signature mechanics (phase-shifting, wall-bouncing charges, shield blocking, multi-part HP, segmented body)
+- AI-generated boss sprites with luminance keying for transparent backgrounds
+
+**Gameplay — Next**
 - Spell card system (named, scripted boss attacks with bonus rewards for no-hit clears)
 - Difficulty selection that changes bullet density and speed
 - Score multiplier that builds with continuous grazing
-- Continue system / credit feeding
-
-**Progression**
-- Selectable ships with different shot types and speeds
-- Unlockable weapon configurations
-- Stage-based structure (themed backgrounds, fixed enemy sequences, mid-bosses)
-- Between-stage shop for upgrades
+- More enemy types (shielded enemies, teleporters, enemies that split on death)
 
 **Polish**
 - Sound effects and music (the Kenney pack includes SFX files)
-- Screen-clearing bomb animation (expanding ring, color inversion)
 - Boss intro sequences (warning text, dramatic pause)
 - Bullet canceling on enemy death (turning bullets into score items, like Touhou)
 - Replay system / high score table
