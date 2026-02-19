@@ -4723,7 +4723,7 @@ function drawMinibossExtras(b, drawW, drawH) {
 
         // Connecting tissue — dark body-colored spine along all segments
         ctx.globalCompositeOperation = 'source-over';
-        const spineW = isAlive ? 8 : 4;
+        const spineW = isAlive ? 12 : 6;
         ctx.strokeStyle = `rgba(${hColorRGB[h]}, ${neckAlpha * 0.4})`;
         ctx.lineWidth = spineW;
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -4756,7 +4756,7 @@ function drawMinibossExtras(b, drawW, drawH) {
           }
           ctx.globalAlpha = neckAlpha * telFlicker;
           if (segSprite) {
-            const drawR = 32 * segScale;
+            const drawR = 48 * segScale; // 50% larger for chunkier necks
             // Normal blend for segment detail
             ctx.globalCompositeOperation = 'source-over';
             ctx.drawImage(segSprite, -drawR / 2, -drawR / 2, drawR, drawR);
@@ -4794,7 +4794,7 @@ function drawMinibossExtras(b, drawW, drawH) {
           const headAngle = Math.atan2(player.y - hy, player.x - hx);
           ctx.save();
           ctx.translate(hx, hy);
-          ctx.rotate(headAngle + Math.PI / 2); // sprite faces "up" naturally
+          ctx.rotate(headAngle - Math.PI / 2); // sprite faces "down" naturally, rotate to face player
           if (headSprite) {
             // Normal blend: grokEdgeFade made black pixels transparent,
             // so dragon head detail renders opaquely (scales, teeth, eyes)
