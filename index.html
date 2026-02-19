@@ -4760,10 +4760,19 @@ function drawMinibossExtras(b, drawW, drawH) {
             // Normal blend for segment detail
             ctx.globalCompositeOperation = 'source-over';
             ctx.drawImage(segSprite, -drawR / 2, -drawR / 2, drawR, drawR);
-            // Additive glow pass for energy feel
+            // Mirror copy on opposite side for fuller neck
+            ctx.save();
+            ctx.scale(1, -1); // flip across the neck axis
+            ctx.drawImage(segSprite, -drawR / 2, -drawR / 2, drawR, drawR);
+            ctx.restore();
+            // Additive glow pass for energy feel (both sides)
             ctx.globalCompositeOperation = 'lighter';
             ctx.globalAlpha = neckAlpha * 0.25 * telFlicker;
             ctx.drawImage(segSprite, -drawR / 2, -drawR / 2, drawR, drawR);
+            ctx.save();
+            ctx.scale(1, -1);
+            ctx.drawImage(segSprite, -drawR / 2, -drawR / 2, drawR, drawR);
+            ctx.restore();
             ctx.globalCompositeOperation = 'source-over';
           } else {
             ctx.fillStyle = hColors[h];
