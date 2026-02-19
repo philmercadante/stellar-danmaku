@@ -367,6 +367,13 @@ const ASSET_PATHS = {
   serpentSheet: 'assets/miniboss/serpent-sprites-v2.png',
   miniboss7: 'assets/miniboss/sentinel.jpg',
   miniboss8: 'assets/miniboss/hydra.jpg',
+  hydraBodySheet: 'assets/miniboss/hydra-body.jpg',
+  hydraHeadsSheet: 'assets/miniboss/hydra-heads.jpg',
+  hydraSegsSheet: 'assets/miniboss/hydra-segments.jpg',
+  hydraBodyV2: 'assets/miniboss/hydra-body-v2.jpg',
+  hydraHeadRedImg: 'assets/miniboss/hydra-head-red.jpg',
+  hydraHeadBlueImg: 'assets/miniboss/hydra-head-blue.jpg',
+  hydraHeadPurpleImg: 'assets/miniboss/hydra-head-purple.jpg',
 
   // Player lasers (Kenney)
   laserBlue1:  'assets/kenney/PNG/Lasers/laserBlue01.png',
@@ -536,11 +543,148 @@ function preprocessMinibossSprites() {
       img[names[f]] = c;
     }
   }
+
+  // --- Helper: elliptical edge fade + luminance floor + brightness boost ---
+  // lumFloor: pixels below this luminance become fully transparent.
+  // fadeStart: elliptical edge fade begins at this radius (0=center, 1=edge).
+  // brightnessBoost: multiply surviving pixel RGB by this factor (for additive blend).
+  function grokEdgeFade(c, cx, fadeStart, lumFloor, brightnessBoost) {
+    const w = c.width, h = c.height;
+    const id = cx.getImageData(0, 0, w, h);
+    const d = id.data;
+    const midX = w / 2, midY = h / 2;
+    const boost = brightnessBoost || 1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        const lum = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+        if (lum < lumFloor) { d[i + 3] = 0; continue; }
+        // Brightness boost: amplify surviving pixel colors for additive blend
+        if (boost > 1) {
+          d[i]     = Math.min(255, Math.floor(d[i] * boost));
+          d[i + 1] = Math.min(255, Math.floor(d[i + 1] * boost));
+          d[i + 2] = Math.min(255, Math.floor(d[i + 2] * boost));
+        }
+        // Elliptical edge fade (linear falloff for smoother transition)
+        const dx = (x - midX) / midX;
+        const dy = (y - midY) / midY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > fadeStart) {
+          const fade = Math.max(0, 1 - (dist - fadeStart) / (1.0 - fadeStart));
+          d[i + 3] = Math.floor(d[i + 3] * fade);
+        }
+      }
+    }
+    cx.putImageData(id, 0, 0);
+  }
+
+  // --- Helper: crop an image and apply grokEdgeFade ---
+  // squareCrop: if true, crop to square using shorter dimension, centered on upper portion
+  // verticalBias: 0=center, negative=shift crop upward (e.g. -0.15 to focus on face)
+  function processHydraImage(srcImg, destKey, cropPct, fadeStart, lumFloor, brightnessBoost, squareCrop, verticalBias) {
+    if (!srcImg) return;
+    const ow = srcImg.naturalWidth || srcImg.width;
+    const oh = srcImg.naturalHeight || srcImg.height;
+    let cropX, cropY, cw, ch;
+    if (squareCrop) {
+      // Crop to square based on shorter dimension, with vertical bias
+      const size = Math.floor(Math.min(ow, oh) * cropPct);
+      cw = size; ch = size;
+      cropX = Math.floor((ow - size) / 2);
+      cropY = Math.floor((oh - size) / 2 + oh * (verticalBias || 0));
+      cropY = Math.max(0, Math.min(oh - size, cropY));
+    } else {
+      const margin = (1 - cropPct) / 2;
+      cropX = Math.floor(ow * margin);
+      cropY = Math.floor(oh * margin);
+      cw = Math.floor(ow * cropPct);
+      ch = Math.floor(oh * cropPct);
+    }
+    const c = document.createElement('canvas');
+    const cx = c.getContext('2d');
+    c.width = cw; c.height = ch;
+    cx.drawImage(srcImg, cropX, cropY, cw, ch, 0, 0, cw, ch);
+    grokEdgeFade(c, cx, fadeStart, lumFloor, brightnessBoost);
+    img[destKey] = c;
+  }
+
+  // Process Hydra v2 individual images (bright-on-black, source-over compositing)
+  // Body: center crop, wide fade, strong boost for opaque creature detail
+  processHydraImage(img['hydraBodyV2'],      'hydraBody',       0.88, 0.65, 8, 2.5);
+  // Heads: square-crop with upward bias to capture face, wide fade, strong boost
+  processHydraImage(img['hydraHeadRedImg'],   'hydraHeadRed',   0.95, 0.55, 8, 2.2, true, -0.12);
+  processHydraImage(img['hydraHeadBlueImg'],  'hydraHeadBlue',  0.95, 0.55, 8, 2.2, true, -0.12);
+  processHydraImage(img['hydraHeadPurpleImg'],'hydraHeadPurple', 0.95, 0.55, 8, 2.2, true, -0.10);
+
+  // Legacy fallback: process old spritesheets if v2 images didn't load
+  if (!img['hydraBody']) {
+    const hydraBody = img['hydraBodySheet'];
+    if (hydraBody) {
+      const ow = hydraBody.naturalWidth || hydraBody.width;
+      const oh = hydraBody.naturalHeight || hydraBody.height;
+      const cropX = Math.floor(ow * 0.125);
+      const cropY = Math.floor(oh * 0.1);
+      const cw = Math.floor(ow * 0.75);
+      const ch = Math.floor(oh * 0.8);
+      const c = document.createElement('canvas');
+      const cx = c.getContext('2d');
+      c.width = cw; c.height = ch;
+      cx.drawImage(hydraBody, cropX, cropY, cw, ch, 0, 0, cw, ch);
+      grokEdgeFade(c, cx, 0.45, 22, 3.0);
+      img['hydraBody'] = c;
+    }
+  }
+
+  if (!img['hydraHeadRed']) {
+    const hydraHeads = img['hydraHeadsSheet'];
+    if (hydraHeads) {
+      const sw = hydraHeads.naturalWidth || hydraHeads.width;
+      const sh = hydraHeads.naturalHeight || hydraHeads.height;
+      const frameW = Math.floor(sw / 3);
+      const sqSize = frameW;
+      const centerY = Math.floor(sh * 0.42);
+      const cropTop = Math.max(0, centerY - Math.floor(sqSize / 2));
+      const headNames = ['hydraHeadRed', 'hydraHeadBlue', 'hydraHeadPurple'];
+      for (let f = 0; f < 3; f++) {
+        const c = document.createElement('canvas');
+        const cx = c.getContext('2d');
+        c.width = sqSize; c.height = sqSize;
+        cx.drawImage(hydraHeads, f * frameW, cropTop, frameW, sqSize, 0, 0, sqSize, sqSize);
+        grokEdgeFade(c, cx, 0.35, 30, 2.0);
+        img[headNames[f]] = c;
+      }
+    }
+  }
+
+  // Process Hydra segments from old spritesheet (no v2 replacement)
+  const hydraSegs = img['hydraSegsSheet'];
+  if (hydraSegs) {
+    const sw = hydraSegs.naturalWidth || hydraSegs.width;
+    const sh = hydraSegs.naturalHeight || hydraSegs.height;
+    const frameW = Math.floor(sw / 3);
+    const plateTop = Math.floor(sh * 0.18);
+    const plateH = Math.floor(sh * 0.13);
+    const segNames = ['hydraSegRed', 'hydraSegBlue', 'hydraSegPurple'];
+    for (let f = 0; f < 3; f++) {
+      const c = document.createElement('canvas');
+      const cx = c.getContext('2d');
+      c.width = frameW; c.height = plateH;
+      cx.drawImage(hydraSegs, f * frameW, plateTop, frameW, plateH, 0, 0, frameW, plateH);
+      grokEdgeFade(c, cx, 0.3, 30, 2.0);
+      img[segNames[f]] = c;
+    }
+  }
 }
 
 // ---- GENERATE HYDRA SPRITES (programmatic pixel art) ----
 function generateHydraSprites() {
-  // --- Body mass sprite: massive organic dark mass with veins and eye markings ---
+  // Skip programmatic body/head/seg generation if AI-generated sprites loaded
+  // (v2 individual images or legacy Grok spritesheets), but always generate
+  // the glob sprite (no AI version exists)
+  const hasGrokSprites = img['hydraBody'] && img['hydraHeadRed'] && img['hydraHeadBlue'] && img['hydraHeadPurple'] && img['hydraSegRed'];
+
+  if (!hasGrokSprites) {
+  // --- Fallback: programmatic body mass sprite ---
   const bodyW = 320, bodyH = 200;
   const bodyC = document.createElement('canvas');
   bodyC.width = bodyW; bodyC.height = bodyH;
@@ -952,8 +1096,9 @@ function generateHydraSprites() {
     sx.putImageData(sData, 0, 0);
     img[col.name] = sc;
   }
+  } // end if (!hasGrokSprites)
 
-  // --- Glob pool sprite: toxic puddle with surface detail ---
+  // --- Glob pool sprite: always generated (no Grok version) ---
   const globSize = 64;
   const globC = document.createElement('canvas');
   globC.width = globSize; globC.height = globSize;
@@ -4492,14 +4637,24 @@ function drawMinibossExtras(b, drawW, drawH) {
       const globSprite = img['hydraGlob'];
 
       // --- Draw body mass using pre-rendered sprite ---
-      ctx.globalCompositeOperation = 'source-over';
+      // Normal (source-over) blend: grokEdgeFade made black pixels transparent,
+      // so creature detail (tentacles, flesh, orbs) renders opaquely over the
+      // space background. Additive overlay adds energy glow on bright spots.
       if (bodySprite) {
-        const bsW = 320, bsH = 200;
-        // Subtle breathing animation
+        const bsW = 240;
+        const bsH = bsW * (bodySprite.height / bodySprite.width);
         const breathe = 1 + Math.sin(t * 0.04) * 0.015;
         ctx.save();
         ctx.scale(breathe, breathe);
+        // Main pass: normal compositing for full creature detail
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 0.92;
         ctx.drawImage(bodySprite, -bsW / 2, -bsH / 2 + 10, bsW, bsH);
+        // Glow pass: additive for energy highlights (orbs, bright accents)
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.2;
+        ctx.drawImage(bodySprite, -bsW / 2, -bsH / 2 + 10, bsW, bsH);
+        ctx.globalAlpha = 1;
         ctx.restore();
       }
 
@@ -4602,10 +4757,12 @@ function drawMinibossExtras(b, drawW, drawH) {
           ctx.globalAlpha = neckAlpha * telFlicker;
           if (segSprite) {
             const drawR = 32 * segScale;
+            // Normal blend for segment detail
+            ctx.globalCompositeOperation = 'source-over';
             ctx.drawImage(segSprite, -drawR / 2, -drawR / 2, drawR, drawR);
             // Additive glow pass for energy feel
             ctx.globalCompositeOperation = 'lighter';
-            ctx.globalAlpha = neckAlpha * 0.2 * telFlicker;
+            ctx.globalAlpha = neckAlpha * 0.25 * telFlicker;
             ctx.drawImage(segSprite, -drawR / 2, -drawR / 2, drawR, drawR);
             ctx.globalCompositeOperation = 'source-over';
           } else {
@@ -4622,28 +4779,31 @@ function drawMinibossExtras(b, drawW, drawH) {
         if (isAlive) {
           const hpPct = head.hp / head.maxHp;
           const glowSize = 24 + (head.regenCount * 3);
-          const headDrawSize = glowSize * 2.8;
+          const headDrawSize = glowSize * 3.5;
 
           // Outer glow aura
           ctx.globalCompositeOperation = 'lighter';
-          const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, glowSize * 1.3);
-          hGrad.addColorStop(0, `rgba(${hColorRGB[h]}, 0.3)`);
-          hGrad.addColorStop(0.5, `rgba(${hColorRGB[h]}, 0.1)`);
+          const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, glowSize * 1.5);
+          hGrad.addColorStop(0, `rgba(${hColorRGB[h]}, 0.25)`);
+          hGrad.addColorStop(0.5, `rgba(${hColorRGB[h]}, 0.08)`);
           hGrad.addColorStop(1, `rgba(${hColorRGB[h]}, 0)`);
           ctx.fillStyle = hGrad;
-          ctx.beginPath(); ctx.arc(hx, hy, glowSize * 1.3, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx, hy, glowSize * 1.5, 0, Math.PI * 2); ctx.fill();
 
           // Head sprite — rotated to face player
           const headAngle = Math.atan2(player.y - hy, player.x - hx);
           ctx.save();
           ctx.translate(hx, hy);
           ctx.rotate(headAngle + Math.PI / 2); // sprite faces "up" naturally
-          ctx.globalCompositeOperation = 'source-over';
           if (headSprite) {
+            // Normal blend: grokEdgeFade made black pixels transparent,
+            // so dragon head detail renders opaquely (scales, teeth, eyes)
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.globalAlpha = 1.0;
             ctx.drawImage(headSprite, -headDrawSize / 2, -headDrawSize / 2, headDrawSize, headDrawSize);
-            // Additive glow boost
+            // Additive glow pass for energy highlights
             ctx.globalCompositeOperation = 'lighter';
-            ctx.globalAlpha = 0.3;
+            ctx.globalAlpha = 0.2;
             ctx.drawImage(headSprite, -headDrawSize / 2, -headDrawSize / 2, headDrawSize, headDrawSize);
             ctx.globalAlpha = 1;
           } else {
