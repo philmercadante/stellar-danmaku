@@ -214,7 +214,7 @@
 <div id="title-screen">
   <h1>STELLAR DANMAKU</h1>
   <div class="subtitle">G A L A G A &nbsp; x &nbsp; T O U H O U</div>
-  <div class="prompt">[ TAP OR PRESS ENTER TO SELECT SHIP ]</div>
+  <div class="prompt">[ TAP OR PRESS ENTER ]</div>
   <div class="controls desktop-controls">
     <span>WASD / ARROWS</span> — Move<br>
     <span>SPACE / Z</span> — Shoot<br>
@@ -361,6 +361,13 @@ const ASSET_PATHS = {
   boss2: 'assets/kenney/PNG/Enemies/enemyBlue4.png',
   boss3: 'assets/kenney/PNG/Enemies/enemyBlack5.png',
 
+  // Miniboss sprites (Grok-generated)
+  miniboss4: 'assets/miniboss/jellyfish.jpg',
+  miniboss5: 'assets/miniboss/scarab.jpg',
+  serpentSheet: 'assets/miniboss/serpent-sprites-v2.png',
+  miniboss7: 'assets/miniboss/sentinel.jpg',
+  miniboss8: 'assets/miniboss/hydra.jpg',
+
   // Player lasers (Kenney)
   laserBlue1:  'assets/kenney/PNG/Lasers/laserBlue01.png',
   laserBlue2:  'assets/kenney/PNG/Lasers/laserBlue06.png',
@@ -446,6 +453,91 @@ function loadAllAssets() {
   });
 }
 
+// Luminance key a canvas: transparent below threshold, soft ramp for mid-tones, edge fade
+function lumKeyCanvas(c, cx, edgeFade = true, lumLow = 45, lumHigh = 130) {
+  const w = c.width, h = c.height;
+  const id = cx.getImageData(0, 0, w, h);
+  const d = id.data;
+  const midX = w / 2, midY = h / 2;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const lum = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+      let alpha = 255;
+      if (lum < lumLow) alpha = 0;
+      else if (lum < lumHigh) alpha = Math.floor(((lum - lumLow) / (lumHigh - lumLow)) * 255);
+      if (edgeFade) {
+        const dx = (x - midX) / midX;
+        const dy = (y - midY) / midY;
+        const edgeDist = Math.sqrt(dx * dx + dy * dy);
+        if (edgeDist > 0.6) {
+          alpha = Math.floor(alpha * Math.max(0, 1 - (edgeDist - 0.6) / 0.4));
+        }
+      }
+      d[i + 3] = alpha;
+    }
+  }
+  cx.putImageData(id, 0, 0);
+}
+
+// Preprocess miniboss sprites: luminance key removes dark backgrounds
+function preprocessMinibossSprites() {
+  const minibossKeys = ['miniboss4', 'miniboss5', 'miniboss7', 'miniboss8'];
+  for (const key of minibossKeys) {
+    const src = img[key];
+    if (!src) continue;
+    const w = src.naturalWidth || src.width;
+    const h = src.naturalHeight || src.height;
+    const c = document.createElement('canvas');
+    const cx = c.getContext('2d');
+    c.width = w; c.height = h;
+    cx.drawImage(src, 0, 0);
+    lumKeyCanvas(c, cx, true);
+    img[key] = c;
+  }
+
+  // Process serpent spritesheet: split into head, body, tail frames, auto-crop
+  const sheet = img['serpentSheet'];
+  if (sheet) {
+    const sw = sheet.naturalWidth || sheet.width;
+    const sh = sheet.naturalHeight || sheet.height;
+    const frameW = Math.floor(sw / 3);
+    const names = ['serpentHead', 'serpentBody', 'serpentTail'];
+    for (let f = 0; f < 3; f++) {
+      // First pass: luminance key the full frame
+      const tmp = document.createElement('canvas');
+      const tmpCx = tmp.getContext('2d');
+      tmp.width = frameW; tmp.height = sh;
+      tmpCx.drawImage(sheet, f * frameW, 0, frameW, sh, 0, 0, frameW, sh);
+      lumKeyCanvas(tmp, tmpCx, false, 20, 60);
+      // Auto-crop to bounding box of non-transparent pixels
+      const id = tmpCx.getImageData(0, 0, frameW, sh);
+      const d = id.data;
+      let minX = frameW, minY = sh, maxX = 0, maxY = 0;
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < frameW; x++) {
+          if (d[(y * frameW + x) * 4 + 3] > 10) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      // Add small padding
+      const pad = 4;
+      minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
+      maxX = Math.min(frameW - 1, maxX + pad); maxY = Math.min(sh - 1, maxY + pad);
+      const cropW = maxX - minX + 1, cropH = maxY - minY + 1;
+      const c = document.createElement('canvas');
+      const cx = c.getContext('2d');
+      c.width = cropW; c.height = cropH;
+      cx.drawImage(tmp, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+      img[names[f]] = c;
+    }
+  }
+}
+
 // ---- SHIP CONFIGURATIONS ----
 const SHIP_CONFIGS = [
   {
@@ -523,14 +615,103 @@ let resolvedMods = {
   maxHpBonus: 0, maxHpOverride: null,
 };
 
+// ---- CAMPAIGN / MODE STATE ----
+let gameMode = 'endless'; // 'endless', 'campaign', or 'bossfight'
+let modeSelectIndex = 0;  // 0 = endless, 1 = campaign, 2 = boss fight
+let bossSelectIndex = 0;  // which boss is highlighted in boss fight mode
+let bossFightType = null;  // boss type to spawn in boss fight mode
+const BOSS_FIGHT_LIST = [
+  { type: 4, name: 'DRIFT JELLYFISH', color: '#44ffee', hp: 80, desc: 'Miniboss 1-1', icon: 'M' },
+  { type: 5, name: 'IRON SCARAB', color: '#ff8800', hp: 120, desc: 'Miniboss 1-2', icon: 'M' },
+  { type: 6, name: 'NEBULA SERPENT', color: '#22ff66', hp: 220, desc: 'Miniboss 1-3', icon: 'M' },
+  { type: 1, name: 'CRIMSON MOTH', color: '#ff4466', hp: 250, desc: 'Boss — Wave 5', icon: 'B' },
+  { type: 7, name: 'PLASMA SENTINEL', color: '#4488ff', hp: 220, desc: 'Miniboss 1-4', icon: 'M' },
+  { type: 8, name: 'VOID HYDRA', color: '#cc44ff', hp: 200, desc: 'Miniboss 1-5', icon: 'M' },
+  { type: 2, name: 'VOID EMPRESS', color: '#aa44ff', hp: 400, desc: 'Boss — Wave 10', icon: 'B' },
+  { type: 3, name: 'STELLAR DRAGON', color: '#ffaa00', hp: 600, desc: 'Boss — Wave 15', icon: 'B' },
+];
+let campaignLevel = null;  // current level def when in campaign
+let campaignWaveIndex = 0; // which wave in the level's sequence
+let campaignTotalWaves = 0;
+let campaignWaveActive = false; // enemies from current wave still alive
+let campaignComplete = false;   // all waves done + enemies dead
+let levelScore = 0;
+let levelDeaths = 0;
+let levelDamageTaken = 0;
+let equipSelectSlot = null;    // which slot is selected in ship view
+let equipSelectIndex = 0;      // cursor in inventory grid
+let levelSelectIndex = 0;      // which level is highlighted
+let levelDoneTimer = 0;        // frames since level done screen appeared
+let levelDoneHover = null;     // 'next' or 'select' — which button is hovered
+
+// ---- SAVE SYSTEM ----
+const SAVE_KEY = 'stellarDanmakuSave';
+const DEFAULT_SAVE = {
+  version: 1,
+  chaptersUnlocked: 1,
+  levels: {},
+  inventory: [],
+  equipped: { weapon1: null, weapon2: null, armor: null, wings: null, engine: null, accessory1: null, accessory2: null }
+};
+
+function loadSave() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return JSON.parse(JSON.stringify(DEFAULT_SAVE));
+    const data = JSON.parse(raw);
+    // merge missing fields from default
+    for (const k of Object.keys(DEFAULT_SAVE)) {
+      if (!(k in data)) data[k] = JSON.parse(JSON.stringify(DEFAULT_SAVE[k]));
+    }
+    if (!data.equipped) data.equipped = { ...DEFAULT_SAVE.equipped };
+    return data;
+  } catch (e) {
+    return JSON.parse(JSON.stringify(DEFAULT_SAVE));
+  }
+}
+
+function writeSave() {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(saveData)); } catch(e) {}
+}
+
+let saveData = loadSave();
+
 // ---- INPUT ----
 const keys = {};
 window.addEventListener('keydown', e => {
   keys[e.key.toLowerCase()] = true;
   if (e.key === 'Enter') {
-    if (gameState === 'title') showSelectScreen();
+    if (gameState === 'title') showModeSelect();
+    else if (gameState === 'modeselect') confirmModeSelect();
+    else if (gameState === 'bossselect') confirmBossSelect();
     else if (gameState === 'select') startGame();
-    else if (gameState === 'gameover') showSelectScreen();
+    else if (gameState === 'gameover') { if (gameMode === 'bossfight') showBossSelect(); else showModeSelect(); }
+    else if (gameState === 'levelselect') startCampaignLevel();
+    else if (gameState === 'leveldone') showLevelSelect();
+    else if (gameState === 'shipview') { gameState = 'levelselect'; equipSelectSlot = null; }
+  }
+  if (e.key === 'Escape' || e.key === 'Backspace') {
+    if (gameState === 'select') { if (gameMode === 'bossfight') showBossSelect(); else showModeSelect(); }
+    else if (gameState === 'bossselect') showModeSelect();
+    else if (gameState === 'levelselect') showModeSelect();
+    else if (gameState === 'shipview') { gameState = 'levelselect'; equipSelectSlot = null; }
+    else if (gameState === 'leveldone') showLevelSelect();
+  }
+  if (gameState === 'modeselect') {
+    if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') {
+      modeSelectIndex = (modeSelectIndex + 2) % 3;
+    }
+    if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') {
+      modeSelectIndex = (modeSelectIndex + 1) % 3;
+    }
+  }
+  if (gameState === 'bossselect') {
+    if (e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') {
+      bossSelectIndex = (bossSelectIndex + BOSS_FIGHT_LIST.length - 1) % BOSS_FIGHT_LIST.length;
+    }
+    if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') {
+      bossSelectIndex = (bossSelectIndex + 1) % BOSS_FIGHT_LIST.length;
+    }
   }
   if (gameState === 'select') {
     if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') {
@@ -540,17 +721,71 @@ window.addEventListener('keydown', e => {
       selectedShip = (selectedShip + 1) % SHIP_CONFIGS.length;
     }
   }
+  if (gameState === 'levelselect') {
+    const chapter = CAMPAIGN_CHAPTERS[1];
+    if (e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') {
+      levelSelectIndex = Math.max(0, levelSelectIndex - 1);
+    }
+    if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') {
+      levelSelectIndex = Math.min(chapter.levels.length - 1, levelSelectIndex + 1);
+    }
+    // S key for ship view
+    if (e.key.toLowerCase() === 'e') {
+      gameState = 'shipview';
+      equipSelectSlot = null;
+      equipSelectIndex = 0;
+    }
+  }
   if (e.key !== 'F5' && e.key !== 'F12') e.preventDefault();
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 
-function showSelectScreen() {
+function showModeSelect() {
   document.getElementById('title-screen').style.display = 'none';
   document.getElementById('game-over').style.display = 'none';
+  gameState = 'modeselect';
+  selectAnim = 0;
+  resetTouchState();
+}
+
+function confirmModeSelect() {
+  if (modeSelectIndex === 0) {
+    gameMode = 'endless';
+    showSelectScreen();
+  } else if (modeSelectIndex === 1) {
+    gameMode = 'campaign';
+    showLevelSelect();
+  } else {
+    showBossSelect();
+  }
+}
+
+function showBossSelect() {
+  gameState = 'bossselect';
+  selectAnim = 0;
+  resetTouchState();
+  document.getElementById('game-over').style.display = 'none';
+}
+
+function confirmBossSelect() {
+  gameMode = 'bossfight';
+  bossFightType = BOSS_FIGHT_LIST[bossSelectIndex].type;
+  showSelectScreen();
+}
+
+function showSelectScreen() {
   gameState = 'select';
   selectAnim = 0;
+  resetTouchState();
+}
 
-  // Reset touch state to prevent stale dragId
+function showLevelSelect() {
+  gameState = 'levelselect';
+  selectAnim = 0;
+  resetTouchState();
+}
+
+function resetTouchState() {
   touch.dragId = null;
   touch.active = false;
   touch.dx = 0;
@@ -560,69 +795,172 @@ function showSelectScreen() {
   touch.btnIds.clear();
 }
 
-function handleTapStart(e) {
-  if (gameState === 'title') showSelectScreen();
-  else if (gameState === 'gameover') showSelectScreen();
+function isLevelUnlocked(levelId) {
+  if (levelId === '1-1') return true;
+  // Unlock next level when previous is cleared
+  const chapter = CAMPAIGN_CHAPTERS[1];
+  const idx = chapter.levels.findIndex(l => l.id === levelId);
+  if (idx <= 0) return true;
+  const prevId = chapter.levels[idx - 1].id;
+  return saveData.levels[prevId] && saveData.levels[prevId].cleared;
 }
 
-function handleSelectTap(e) {
-  if (gameState !== 'select') return;
+function startCampaignLevel() {
+  const chapter = CAMPAIGN_CHAPTERS[1];
+  const level = chapter.levels[levelSelectIndex];
+  if (!level || !isLevelUnlocked(level.id)) return;
+  campaignLevel = level;
+  campaignWaveIndex = 0;
+  campaignTotalWaves = level.waves.length;
+  campaignWaveActive = false;
+  campaignComplete = false;
+  levelScore = 0;
+  levelDeaths = 0;
+  levelDamageTaken = 0;
+  gameMode = 'campaign';
+  startGame();
+}
+
+function getCanvasCoords(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
   const scale = canvas._scale || 1;
-  const cx = (e.clientX - rect.left) / scale;
-  const cy = (e.clientY - rect.top) / scale;
-  // Ship panels: 3 panels across the width
-  const panelW = W / 3;
-  if (cy > 180 && cy < 550) {
-    const tapped = Math.floor(cx / panelW);
-    if (tapped >= 0 && tapped < 3) {
-      if (tapped === selectedShip) {
-        startGame(); // tap selected ship to confirm
-      } else {
-        selectedShip = tapped;
+  return { x: (clientX - rect.left) / scale, y: (clientY - rect.top) / scale };
+}
+
+function handleCanvasInput(clientX, clientY) {
+  const { x: cx, y: cy } = getCanvasCoords(clientX, clientY);
+
+  if (gameState === 'title') { showModeSelect(); return; }
+  if (gameState === 'gameover') { if (gameMode === 'bossfight') showBossSelect(); else showModeSelect(); return; }
+
+  if (gameState === 'modeselect') {
+    // Three panels side by side
+    if (cy > 140 && cy < 420) {
+      const panelW = 135, gap = 12;
+      const totalW = 3 * panelW + 2 * gap;
+      const startX = (W - totalW) / 2;
+      const idx = Math.floor((cx - startX) / (panelW + gap));
+      if (idx >= 0 && idx < 3) {
+        modeSelectIndex = idx;
+        confirmModeSelect();
       }
     }
+    return;
   }
-  // Confirm button area at bottom
-  if (cy > 600 && cy < 680) {
-    startGame();
+
+  if (gameState === 'bossselect') {
+    const rowH = 72, startY = 95;
+    for (let i = 0; i < BOSS_FIGHT_LIST.length; i++) {
+      const ry = startY + i * rowH;
+      if (cy > ry && cy < ry + rowH - 6 && cx > 30 && cx < W - 30) {
+        if (bossSelectIndex === i) confirmBossSelect();
+        else bossSelectIndex = i;
+        return;
+      }
+    }
+    return;
+  }
+
+  if (gameState === 'select') {
+    const panelW = W / 3;
+    if (cy > 80 && cy < 600) {
+      const tapped = Math.floor(cx / panelW);
+      if (tapped >= 0 && tapped < 3) {
+        if (tapped === selectedShip) startGame();
+        else selectedShip = tapped;
+      }
+    }
+    if (cy > 600) startGame();
+    return;
+  }
+
+  if (gameState === 'levelselect') {
+    // Level list area
+    const chapter = CAMPAIGN_CHAPTERS[1];
+    const startY = 140;
+    for (let i = 0; i < chapter.levels.length; i++) {
+      const ly = startY + i * 75;
+      if (cy > ly && cy < ly + 65 && cx > 40 && cx < W - 40) {
+        if (isLevelUnlocked(chapter.levels[i].id)) {
+          if (levelSelectIndex === i) {
+            startCampaignLevel();
+          } else {
+            levelSelectIndex = i;
+          }
+        }
+        return;
+      }
+    }
+    // Ship view button
+    if (cy > 620 && cy < 680 && cx > 40 && cx < 230) {
+      gameState = 'shipview';
+      equipSelectSlot = null;
+      equipSelectIndex = 0;
+    }
+    // Back button
+    if (cy > 620 && cy < 680 && cx > 250 && cx < W - 40) {
+      showModeSelect();
+    }
+    return;
+  }
+
+  if (gameState === 'shipview') {
+    handleShipViewTap(cx, cy);
+    return;
+  }
+
+  if (gameState === 'leveldone') {
+    const btnY = 500, btnH = 50, btnW = W / 2 - 50;
+    // Next level button
+    if (cy > btnY && cy < btnY + btnH && cx > 40 && cx < 40 + btnW) {
+      const chapter = CAMPAIGN_CHAPTERS[1];
+      const idx = chapter.levels.findIndex(l => l.id === campaignLevel.id);
+      if (idx < chapter.levels.length - 1) {
+        levelSelectIndex = idx + 1;
+        startCampaignLevel();
+      } else {
+        showLevelSelect();
+      }
+    }
+    // Level select button
+    if (cy > btnY && cy < btnY + btnH && cx > W / 2 + 10 && cx < W / 2 + 10 + btnW) {
+      showLevelSelect();
+    }
+    return;
   }
 }
+
 canvas.addEventListener('click', (e) => {
-  handleTapStart(e);
-  handleSelectTap(e);
+  handleCanvasInput(e.clientX, e.clientY);
 });
-// Mobile: touch events are preventDefault'd at document level, killing synthetic clicks.
-// Need direct touchend on canvas for select screen + title/gameover transitions.
 canvas.addEventListener('touchend', (e) => {
   const t = e.changedTouches[0];
   if (!t) return;
-  if (gameState === 'title') { showSelectScreen(); return; }
-  if (gameState === 'gameover') { showSelectScreen(); return; }
-  if (gameState !== 'select') return;
-  const rect = canvas.getBoundingClientRect();
-  const scale = canvas._scale || 1;
-  const cx = (t.clientX - rect.left) / scale;
-  const cy = (t.clientY - rect.top) / scale;
-  const panelW = W / 3;
-  if (cy > 80 && cy < 600) {
-    const tapped = Math.floor(cx / panelW);
-    if (tapped >= 0 && tapped < 3) {
-      if (tapped === selectedShip) {
-        startGame();
-      } else {
-        selectedShip = tapped;
-      }
-    }
-  }
-  if (cy > 600) {
-    startGame();
-  }
+  handleCanvasInput(t.clientX, t.clientY);
 }, { passive: true });
-document.getElementById('title-screen').addEventListener('click', handleTapStart);
-document.getElementById('title-screen').addEventListener('touchend', handleTapStart);
-document.getElementById('game-over').addEventListener('click', handleTapStart);
-document.getElementById('game-over').addEventListener('touchend', handleTapStart);
+
+// Hover tracking for button feedback
+function updateLevelDoneHover(clientX, clientY) {
+  if (gameState !== 'leveldone') { levelDoneHover = null; return; }
+  const { x: cx, y: cy } = getCanvasCoords(clientX, clientY);
+  const btnY = 500, btnH = 50, btnW = W / 2 - 50;
+  if (cy > btnY && cy < btnY + btnH && cx > 40 && cx < 40 + btnW) {
+    levelDoneHover = 'next';
+  } else if (cy > btnY && cy < btnY + btnH && cx > W / 2 + 10 && cx < W / 2 + 10 + btnW) {
+    levelDoneHover = 'select';
+  } else {
+    levelDoneHover = null;
+  }
+}
+canvas.addEventListener('mousemove', (e) => updateLevelDoneHover(e.clientX, e.clientY));
+canvas.addEventListener('touchstart', (e) => {
+  const t = e.touches[0];
+  if (t) updateLevelDoneHover(t.clientX, t.clientY);
+}, { passive: true });
+document.getElementById('title-screen').addEventListener('click', () => showModeSelect());
+document.getElementById('title-screen').addEventListener('touchend', () => showModeSelect());
+document.getElementById('game-over').addEventListener('click', () => showModeSelect());
+document.getElementById('game-over').addEventListener('touchend', () => showModeSelect());
 
 // ---- TOUCH CONTROLS ----
 const touch = {
@@ -853,6 +1191,209 @@ const ROGUELIKE_POWERUPS = [
     onPickup: () => { player.maxHp = 1; player.hp = 1; } },
 ];
 
+// ---- CAMPAIGN SHIP ----
+const CAMPAIGN_SHIP = {
+  name: 'PIONEER', subtitle: 'STANDARD-ISSUE',
+  hp: 4, maxHp: 4, bombs: 2,
+  speed: 4.5, focusSpeed: 2,
+  hitboxRadius: 3, shootDelay: 7,
+  color: '#88aacc',
+  drawType: 'kenney2',
+  baseSprite: 'ship2Base',
+  dmgSprites: ['ship2Dmg1', 'ship2Dmg2', 'ship2Dmg3'],
+  desc: ['Basic fighter.', 'Equip gear to grow.'],
+  stats: { hp: 2, spd: 2, pwr: 1, bmb: 2 },
+};
+
+// ---- EQUIPMENT SYSTEM ----
+const EQUIP_RARITY = {
+  common:    { name: 'COMMON',    color: '#aaaaaa', weight: 50 },
+  uncommon:  { name: 'UNCOMMON',  color: '#44cc44', weight: 30 },
+  rare:      { name: 'RARE',      color: '#4488ff', weight: 15 },
+  epic:      { name: 'EPIC',      color: '#aa44ff', weight: 4 },
+  legendary: { name: 'LEGENDARY', color: '#ffaa00', weight: 1 },
+};
+
+const EQUIPMENT_DEFS = {
+  // ═══ WEAPONS (2 slots) ═══
+  wpn_pulse_laser:     { name: 'Pulse Laser',      slot: 'weapon',    rarity: 'common',    desc: '+1 stream, -10% delay',    icon: '\u2502', effect: m => { m.shootDelayMult *= 0.9; m.extraStreams = (m.extraStreams||0) + 1; } },
+  wpn_scatter_gun:     { name: 'Scatter Gun',      slot: 'weapon',    rarity: 'common',    desc: '+2 angled shots',          icon: '\u2571', effect: m => { m.sideShots = (m.sideShots||0) + 2; } },
+  wpn_plasma_repeater: { name: 'Plasma Repeater',  slot: 'weapon',    rarity: 'uncommon',  desc: '-25% delay, +15% dmg',     icon: '\u00BB', effect: m => { m.shootDelayMult *= 0.75; m.damageMult *= 1.15; } },
+  wpn_homing_pods:     { name: 'Homing Pods',      slot: 'weapon',    rarity: 'uncommon',  desc: '+2 homing missiles',       icon: '~',  effect: m => { m.homingStrength += 0.04; m.sideShots = (m.sideShots||0) + 2; } },
+  wpn_railgun:         { name: 'Railgun',          slot: 'weapon',    rarity: 'rare',      desc: '+80% dmg, +2 pierce',      icon: '\u2550', effect: m => { m.damageMult *= 1.8; m.pierceCount += 2; m.shootDelayMult *= 1.3; } },
+  wpn_beam_cannon:     { name: 'Beam Cannon',      slot: 'weapon',    rarity: 'rare',      desc: 'x3 focus dmg, +1 pierce',  icon: '\u2503', effect: m => { m.focusDamageMult *= 3; m.pierceCount += 1; } },
+  wpn_void_launcher:   { name: 'Void Launcher',    slot: 'weapon',    rarity: 'epic',      desc: 'AoE shots, +40% dmg',      icon: '\u2734', effect: m => { m.splitOnHit = true; m.damageMult *= 1.4; } },
+
+  // ═══ ARMOR (1 slot) ═══
+  arm_steel_plate:   { name: 'Steel Plating',    slot: 'armor',  rarity: 'common',    desc: '+2 max HP',                icon: '\u25A0', effect: m => { m.maxHpBonus += 2; } },
+  arm_reactive_hull: { name: 'Reactive Hull',    slot: 'armor',  rarity: 'common',    desc: '+1 HP, +20 inv frames',    icon: '\u25A3', effect: m => { m.maxHpBonus += 1; m.invincBonus += 20; } },
+  arm_nano_repair:   { name: 'Nano Repair',      slot: 'armor',  rarity: 'uncommon',  desc: 'Regen 1 HP / 45s',         icon: '+',  effect: m => { m.regenInterval = 2700; } },
+  arm_mirror_coat:   { name: 'Mirror Coating',   slot: 'armor',  rarity: 'rare',      desc: '+3 HP, 15% reflect',       icon: '\u25C7', effect: m => { m.maxHpBonus += 3; m.reflectChance = 0.15; } },
+  arm_phase_shield:  { name: 'Phase Shield',     slot: 'armor',  rarity: 'epic',      desc: 'Auto-bomb on lethal, +4HP', icon: '\u2742', effect: m => { m.autoBomb = true; m.maxHpBonus += 4; } },
+
+  // ═══ WINGS (1 slot) ═══
+  wng_stabilizers:    { name: 'Stabilizer Fins',  slot: 'wings', rarity: 'common',    desc: '+15% speed',                icon: '\u2190', effect: m => { m.speedMult *= 1.15; } },
+  wng_swept_wings:    { name: 'Swept Wings',      slot: 'wings', rarity: 'common',    desc: '+10% spd, smaller hitbox',  icon: '\u2194', effect: m => { m.speedMult *= 1.1; m.hitboxShrink = (m.hitboxShrink||0) + 0.5; } },
+  wng_phantom_wings:  { name: 'Phantom Wings',    slot: 'wings', rarity: 'uncommon',  desc: '+25% focus speed',          icon: '\u2591', effect: m => { m.focusSpeedMult *= 1.25; } },
+  wng_vector_thrust:  { name: 'Vector Thrust',    slot: 'wings', rarity: 'rare',      desc: '+30% spd, +20% focus spd',  icon: '\u21C9', effect: m => { m.speedMult *= 1.3; m.focusSpeedMult *= 1.2; m.hitboxShrink = (m.hitboxShrink||0) + 1; } },
+  wng_blink_drive:    { name: 'Blink Drive',      slot: 'wings', rarity: 'epic',      desc: '+50% spd, +40% focus',      icon: '\u21AF', effect: m => { m.speedMult *= 1.5; m.focusSpeedMult *= 1.4; } },
+
+  // ═══ ENGINE (1 slot) ═══
+  eng_intake_fan:    { name: 'Intake Fan',        slot: 'engine', rarity: 'common',    desc: '+50% collect radius',        icon: '\u00A4', effect: m => { m.collectRadiusMult *= 1.5; } },
+  eng_graze_turbine: { name: 'Graze Turbine',     slot: 'engine', rarity: 'common',    desc: '+20 graze, x1.5 graze pts',  icon: '\u2248', effect: m => { m.grazeRadiusBonus += 20; m.grazeScoreMult *= 1.5; } },
+  eng_fusion_core:   { name: 'Fusion Core',       slot: 'engine', rarity: 'uncommon',  desc: '+30% focus dmg, 2x collect',  icon: '\u2299', effect: m => { m.focusDamageMult *= 1.3; m.collectRadiusMult *= 2; } },
+  eng_overcharge:    { name: 'Overcharge Reactor', slot: 'engine', rarity: 'rare',      desc: '-30% shoot delay',           icon: '\u26A1', effect: m => { m.shootDelayMult *= 0.7; } },
+  eng_dark_matter:   { name: 'Dark Matter Engine', slot: 'engine', rarity: 'epic',      desc: '+40 graze, x2 graze pts',    icon: '\u2604', effect: m => { m.grazeRadiusBonus += 40; m.grazeScoreMult *= 2; } },
+
+  // ═══ ACCESSORIES (2 slots) ═══
+  acc_score_chip:       { name: 'Score Chip',       slot: 'accessory', rarity: 'common',    desc: '+30% kill score',            icon: '$',  effect: m => { m.scoreKillMult *= 1.3; } },
+  acc_bomb_pack:        { name: 'Bomb Satchel',     slot: 'accessory', rarity: 'common',    desc: '+2 bombs, +15% bomb dmg',    icon: 'B',  effect: m => { m.bombBonus = (m.bombBonus||0) + 2; m.bombDamageMult *= 1.15; } },
+  acc_lucky_charm:      { name: 'Lucky Charm',      slot: 'accessory', rarity: 'uncommon',  desc: '+25% item drops',            icon: '\u2663', effect: m => { m.dropRateMult = (m.dropRateMult||1) * 1.25; } },
+  acc_orbital_drone:    { name: 'Orbital Drone',    slot: 'accessory', rarity: 'rare',      desc: 'Drone fires at enemies',     icon: '\u25CB', effect: m => { m.orbitalBlades += 1; } },
+  acc_chain_amplifier:  { name: 'Chain Amplifier',  slot: 'accessory', rarity: 'rare',      desc: 'Kills zap 2 nearby',         icon: '\u2301', effect: m => { m.chainTargets += 2; m.chainDamagePct = Math.max(m.chainDamagePct||0, 0.4); } },
+  acc_soul_siphon:      { name: 'Soul Siphon',      slot: 'accessory', rarity: 'epic',      desc: '8% kill heal chance',        icon: '\u2665', effect: m => { m.killHealChance = (m.killHealChance||0) + 0.08; } },
+  acc_void_cloak:       { name: 'Void Cloak',       slot: 'accessory', rarity: 'legendary', desc: 'Revive once with 1HP',       icon: '\u2726', effect: m => { m.secondWind = true; } },
+};
+
+// ---- LOOT TABLES ----
+const LOOT_WEIGHTS = {
+  miniboss: { common: 50, uncommon: 35, rare: 12, epic: 3, legendary: 0 },
+  boss:     { common: 20, uncommon: 35, rare: 30, epic: 12, legendary: 3 },
+};
+
+const LEVEL_LOOT_POOLS = {
+  '1-1': ['arm_steel_plate', 'wng_stabilizers', 'eng_intake_fan', 'acc_score_chip', 'wpn_pulse_laser'],
+  '1-2': ['arm_steel_plate', 'wng_stabilizers', 'eng_intake_fan', 'acc_score_chip', 'wpn_pulse_laser',
+           'wpn_scatter_gun', 'acc_bomb_pack', 'eng_graze_turbine'],
+  '1-3': ['arm_steel_plate', 'wng_stabilizers', 'eng_intake_fan', 'acc_score_chip', 'wpn_pulse_laser',
+           'arm_reactive_hull', 'wpn_scatter_gun', 'acc_bomb_pack', 'eng_graze_turbine',
+           'wpn_plasma_repeater', 'wng_phantom_wings', 'eng_fusion_core', 'acc_lucky_charm'],
+  '1-4': ['arm_reactive_hull', 'wpn_scatter_gun', 'acc_bomb_pack', 'eng_graze_turbine',
+           'wpn_plasma_repeater', 'wng_phantom_wings', 'eng_fusion_core', 'acc_lucky_charm',
+           'wpn_railgun', 'arm_mirror_coat'],
+  '1-5': ['wpn_plasma_repeater', 'wng_phantom_wings', 'eng_fusion_core', 'acc_lucky_charm',
+           'wpn_railgun', 'arm_mirror_coat', 'wng_vector_thrust', 'eng_overcharge',
+           'wpn_beam_cannon', 'acc_chain_amplifier'],
+  '1-6': ['wpn_railgun', 'arm_mirror_coat', 'wng_vector_thrust', 'eng_overcharge',
+           'wpn_beam_cannon', 'acc_chain_amplifier', 'acc_orbital_drone',
+           'wpn_void_launcher', 'arm_phase_shield', 'wng_blink_drive',
+           'eng_dark_matter', 'acc_soul_siphon', 'acc_void_cloak',
+           'wpn_homing_pods', 'arm_nano_repair', 'wng_swept_wings'],
+};
+
+function rollLoot(lootType, levelId) {
+  const weights = LOOT_WEIGHTS[lootType];
+  const pool = LEVEL_LOOT_POOLS[levelId];
+  if (!weights || !pool) return null;
+
+  // Roll rarity
+  const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0);
+  let roll = Math.random() * totalWeight;
+  let rolledRarity = 'common';
+  for (const [rarity, weight] of Object.entries(weights)) {
+    roll -= weight;
+    if (roll <= 0) { rolledRarity = rarity; break; }
+  }
+
+  // Filter pool by rarity
+  let candidates = pool.filter(id => EQUIPMENT_DEFS[id] && EQUIPMENT_DEFS[id].rarity === rolledRarity);
+  // If no candidates at that rarity, try adjacent rarities
+  if (candidates.length === 0) {
+    candidates = pool.filter(id => EQUIPMENT_DEFS[id]);
+  }
+  if (candidates.length === 0) return null;
+
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+// ---- CAMPAIGN CHAPTERS ----
+const CAMPAIGN_CHAPTERS = {
+  1: {
+    name: 'FRONTIER SECTOR',
+    levels: [
+      {
+        id: '1-1', name: 'First Contact',
+        enemies: ['grunt'],
+        miniboss: true, bossType: 4, bossHP: 80,
+        waves: [
+          { pattern: 'VERTICAL_COLUMN', types: ['grunt'], count: 5 },
+          { pattern: 'CHEVRON', types: ['grunt'], count: 5 },
+          { pattern: 'STREAM', types: ['grunt'], count: 8, side: 'left' },
+          { pattern: 'BOSS', bossType: 4, bossHP: 80 },
+        ]
+      },
+      {
+        id: '1-2', name: 'Patrol Duty',
+        enemies: ['grunt', 'swooper'],
+        miniboss: true, bossType: 5, bossHP: 120,
+        waves: [
+          { pattern: 'VERTICAL_COLUMN', types: ['grunt'], count: 5 },
+          { pattern: 'SIDE_SWOOP', types: ['swooper'], count: 6, side: 'left' },
+          { pattern: 'CROSSING_STREAMS', types: ['grunt'], count: 8 },
+          { pattern: 'PINCER', types: ['swooper'], count: 6 },
+          { pattern: 'BOSS', bossType: 5, bossHP: 120 },
+        ]
+      },
+      {
+        id: '1-3', name: 'Ambush',
+        enemies: ['grunt', 'swooper', 'spinner'],
+        miniboss: true, boss: true, bossType: 1, bossHP: 180,
+        waves: [
+          { pattern: 'CHEVRON', types: ['grunt'], count: 7 },
+          { pattern: 'SPINNER_DESCENT', types: ['spinner'], count: 4 },
+          { pattern: 'BOSS', bossType: 6, bossHP: 150 },
+          { pattern: 'STREAM', types: ['grunt'], count: 10, side: 'right' },
+          { pattern: 'DECOY_AND_AMBUSH', types: ['grunt', 'spinner'] },
+          { pattern: 'BOSS', bossType: 1, bossHP: 180 },
+        ]
+      },
+      {
+        id: '1-4', name: 'Supply Lines',
+        enemies: ['grunt', 'tank', 'swooper'],
+        miniboss: true, bossType: 7, bossHP: 200,
+        waves: [
+          { pattern: 'SIDE_SWOOP', types: ['swooper'], count: 6, side: 'right' },
+          { pattern: 'CURTAIN_WALL', types: ['grunt', 'tank'], count: 7 },
+          { pattern: 'STREAM', types: ['grunt'], count: 6, side: 'left' },
+          { pattern: 'ANCHOR', types: ['tank', 'grunt'] },
+          { pattern: 'BRACKET', types: ['swooper', 'grunt'] },
+          { pattern: 'BOSS', bossType: 7, bossHP: 200 },
+        ]
+      },
+      {
+        id: '1-5', name: 'Blockade Run',
+        enemies: ['tank', 'spinner', 'sniper'],
+        miniboss: true, bossType: 8, bossHP: 200,
+        waves: [
+          { pattern: 'SNIPER_ALLEY', types: ['sniper'], count: 3 },
+          { pattern: 'CURTAIN_WALL', types: ['tank', 'grunt'], count: 6 },
+          { pattern: 'VERTICAL_COLUMN', types: ['grunt'], count: 4 },
+          { pattern: 'REVOLVING_DOOR', types: ['spinner', 'tank', 'grunt'] },
+          { pattern: 'CAGE', types: ['grunt', 'tank'], count: 8 },
+          { pattern: 'ESCALATION_LADDER', types: ['grunt', 'spinner', 'sniper'] },
+          { pattern: 'BOSS', bossType: 8, bossHP: 200 },
+        ]
+      },
+      {
+        id: '1-6', name: "Dragon's Gate",
+        enemies: ['grunt', 'swooper', 'spinner', 'tank', 'sniper'],
+        miniboss: false, boss: true, bossType: 3, bossHP: 450,
+        waves: [
+          { pattern: 'PINCER', types: ['swooper'], count: 8 },
+          { pattern: 'CURTAIN_WALL', types: ['grunt', 'tank'], count: 8 },
+          { pattern: 'SPOKE_WHEEL', types: ['spinner', 'grunt'] },
+          { pattern: 'STREAM', types: ['grunt'], count: 6, side: 'left' },
+          { pattern: 'BRACKET', types: ['tank', 'spinner'] },
+          { pattern: 'FALSE_RETREAT', types: ['swooper'], count: 5 },
+          { pattern: 'CROSSING_STREAMS', types: ['grunt', 'spinner'], count: 10 },
+          { pattern: 'SNIPER_ALLEY', types: ['sniper'], count: 3 },
+          { pattern: 'BOSS', bossType: 3, bossHP: 450 },
+        ]
+      },
+    ]
+  }
+};
+
 // ---- HELPER FUNCTIONS ----
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 function angleToward(from, to) { return Math.atan2(to.y - from.y, to.x - from.x); }
@@ -917,7 +1458,29 @@ function isFocused() {
 }
 
 // ---- PLAYER SHOOTING (dispatches to ship-specific) ----
+function playerShootPioneer() {
+  const p = player;
+  // Basic single stream — equipment adds more via resolvedMods
+  createPlayerBullet({ x: p.x, y: p.y - 16, vx: 0, vy: -10, damage: 1.5, size: 3, color: '#88aacc', type: 'main' });
+  // Extra streams from equipment
+  const extra = resolvedMods.extraStreams || 0;
+  if (extra >= 1) {
+    createPlayerBullet({ x: p.x, y: p.y - 12, vx: 0, vy: -10, damage: 1.2, size: 2.5, color: '#88aacc', type: 'main' });
+  }
+  // Side shots from equipment
+  const sides = resolvedMods.sideShots || 0;
+  if (sides >= 2) {
+    createPlayerBullet({ x: p.x - 8, y: p.y - 8, vx: -1.5, vy: -9, damage: 1, size: 2, color: '#88ccff', type: 'side' });
+    createPlayerBullet({ x: p.x + 8, y: p.y - 8, vx: 1.5, vy: -9, damage: 1, size: 2, color: '#88ccff', type: 'side' });
+  }
+  if (sides >= 4) {
+    createPlayerBullet({ x: p.x - 14, y: p.y - 4, vx: -3, vy: -8, damage: 0.8, size: 2, color: '#88ccff', type: 'side' });
+    createPlayerBullet({ x: p.x + 14, y: p.y - 4, vx: 3, vy: -8, damage: 0.8, size: 2, color: '#88ccff', type: 'side' });
+  }
+}
+
 function playerShoot() {
+  if (gameMode === 'campaign') { playerShootPioneer(); return; }
   if (selectedShip === 0) playerShootVanguard();
   else if (selectedShip === 1) playerShootTempest();
   else playerShootBastion();
@@ -1092,6 +1655,7 @@ function useBombBastion() {
 
 function useBomb() {
   if (player.bombs <= 0 || !player.alive || bombCooldown > 0) return;
+  if (gameMode === 'campaign') { useBombVanguard(); return; }
   const shipType = selectedShip;
   if (shipType === 0) useBombVanguard();
   else if (shipType === 1) useBombTempest();
@@ -1145,6 +1709,12 @@ function createBoss(bossType) {
     case 1: return { ...base, hp: 250, maxHp: 250, name: 'CRIMSON MOTH', color: '#ff4466', spriteKey: 'boss1' };
     case 2: return { ...base, hp: 400, maxHp: 400, name: 'VOID EMPRESS', color: '#aa44ff', w: 60, h: 60, spriteKey: 'boss2' };
     case 3: return { ...base, hp: 600, maxHp: 600, name: 'STELLAR DRAGON', color: '#ffaa00', w: 65, h: 65, spriteKey: 'boss3' };
+    // Minibosses (types 4-8) — renderW/renderH = display size (2:3 aspect), w/h = base collision box
+    case 4: return { ...base, hp: 120, maxHp: 120, name: 'DRIFT JELLYFISH', color: '#44ffee', w: 50, h: 70, renderW: 120, renderH: 180, spriteKey: 'miniboss4', isMiniboss: true, value: 2000, targetY: 130, curveT: 0, curveAx: 160, curveAy: 120, curveFx: 1, curveFy: 2, curveCx: W / 2, curveCy: 280, phaseState: 'solid', phaseTimer: 0, phaseCooldown: 0, trailHistory: [], trailBulletTimer: 0 };
+    case 5: return { ...base, hp: 160, maxHp: 160, name: 'IRON SCARAB', color: '#ff8800', w: 60, h: 60, renderW: 140, renderH: 210, spriteKey: 'miniboss5', isMiniboss: true, value: 2500, targetY: 120, chargeTimer: 0, charging: false, chargeVx: 0, chargeVy: 0, aiState: 'HOVER', aiTimer: 0, bouncesLeft: 0, maxBounces: 2, craters: [], chargeSpeed: 5.5, wingsSpread: true };
+    case 6: return { ...base, hp: 220, maxHp: 220, name: 'NEBULA SERPENT', color: '#22ff66', w: 60, h: 75, renderW: 120, renderH: 135, spriteKey: 'serpentHead', isMiniboss: true, value: 3000, targetY: 180, segments: [], posHistory: [], heading: Math.PI / 2, aiState: 'ROTATE', aiTimer: 0, aiDuration: 45, rotateDir: 1, baseSpeed: 2.2, segCount: 7, segSpacing: 42, _cycleStep: 0 };
+    case 7: return { ...base, hp: 220, maxHp: 220, name: 'PLASMA SENTINEL', color: '#4488ff', w: 55, h: 55, renderW: 130, renderH: 195, spriteKey: 'miniboss7', isMiniboss: true, value: 3500, targetY: 140, orbAngle: 0, orbCount: 4, orbSpeed: 0.03, shields: [{hp:30,maxHp:30,alive:true},{hp:30,maxHp:30,alive:true},{hp:30,maxHp:30,alive:true},{hp:30,maxHp:30,alive:true}], shieldsAlive: 4, vulnerabilityTimer: 0, vulnerabilityActive: false, vulnerabilityDuration: 90, vulnerabilityCooldown: 480, vulnerabilityDmgAccum: 0, retreatTimer: 0 };
+    case 8: return { ...base, hp: 200, maxHp: 200, name: 'VOID HYDRA', color: '#cc44ff', w: 60, h: 60, renderW: 150, renderH: 224, spriteKey: 'miniboss8', isMiniboss: true, value: 4000, targetY: 110, headAngles: [0, 0, 0], headPositions: [{x:0,y:0},{x:0,y:0},{x:0,y:0}], heads: [{hp:40,maxHp:40,alive:true,regenTimer:0,regenCount:0},{hp:40,maxHp:40,alive:true,regenTimer:0,regenCount:0},{hp:40,maxHp:40,alive:true,regenTimer:0,regenCount:0}], exposedTimer: 0, exposedActive: false, lastSeverTimes: [0,0,0], headsAlive: 3 };
     default: return { ...base, hp: 200 + bossType * 100, maxHp: 200 + bossType * 100, name: 'BOSS', color: '#ff4444', spriteKey: 'boss1' };
   }
 }
@@ -1229,23 +1799,374 @@ function updateBossAI(b) {
   if (!b.entered) {
     b.y = lerp(b.y, b.targetY, 0.02);
     if (Math.abs(b.y - b.targetY) < 2) b.entered = true;
+    // Serpent: record position history during entry so body forms smoothly
+    if (b.type === 6 && b.posHistory) {
+      b.posHistory.push({ x: b.x, y: b.y, heading: b.heading });
+      if (b.posHistory.length > 500) b.posHistory.shift();
+    }
     return;
   }
 
   b.phaseTimer++; b.shootTimer++; b.moveTimer++; b.angle += 0.02;
 
-  if (b.moveTimer > 120) { b.moveTimer = 0; b.targetX = 80 + Math.random() * (W - 160); }
-  b.x = lerp(b.x, b.targetX, 0.03);
-
   const hpPct = b.hp / b.maxHp;
   if (hpPct < 0.3) b.phase = 2;
   else if (hpPct < 0.6) b.phase = 1;
+
+  // Movement differs by type
+  if (b.isMiniboss) {
+    updateMinibossMovement(b);
+  } else {
+    if (b.moveTimer > 120) { b.moveTimer = 0; b.targetX = 80 + Math.random() * (W - 160); }
+    b.x = lerp(b.x, b.targetX, 0.03);
+  }
 
   switch (b.type) {
     case 1: bossPattern1(b); break;
     case 2: bossPattern2(b); break;
     case 3: bossPattern3(b); break;
+    case 4: bossPattern4(b); break;
+    case 5: bossPattern5(b); break;
+    case 6: bossPattern6(b); break;
+    case 7: bossPattern7(b); break;
+    case 8: bossPattern8(b); break;
     default: bossPattern1(b); break;
+  }
+}
+
+function updateMinibossMovement(b) {
+  switch (b.type) {
+    case 4: { // Jellyfish: lissajous drift + phase-shifting
+      // Phase-shift state machine
+      b.phaseCooldown--;
+      const phaseOutDur = b.phase >= 2 ? 60 : 90; // shorter at phase 2
+      switch (b.phaseState) {
+        case 'solid':
+          if (b.phaseCooldown <= 0 && globalTime > 120) {
+            b.phaseState = 'fading';
+            b.phaseTimer = 0;
+          }
+          break;
+        case 'fading':
+          b.phaseTimer++;
+          if (b.phaseTimer >= 30) { // 0.5s fade out
+            b.phaseState = 'phased';
+            b.phaseTimer = 0;
+            // Shift lissajous parameters
+            b.curveFx = 1 + Math.floor(Math.random() * 2); // 1 or 2
+            b.curveFy = 2 + Math.floor(Math.random() * 2); // 2 or 3
+            b.curveCx = 120 + Math.random() * (W - 240);
+            b.curveCy = 180 + Math.random() * 200;
+          }
+          break;
+        case 'phased':
+          b.phaseTimer++;
+          if (b.phaseTimer >= phaseOutDur) {
+            b.phaseState = 'appearing';
+            b.phaseTimer = 0;
+          }
+          break;
+        case 'appearing':
+          b.phaseTimer++;
+          if (b.phaseTimer >= 30) { // 0.5s fade in
+            b.phaseState = 'solid';
+            b.phaseTimer = 0;
+            b.phaseCooldown = b.phase >= 2 ? 240 : b.phase >= 1 ? 300 : 360;
+            // Phase-in burst
+            const burstCount = b.phase >= 2 ? 12 : 8;
+            fireCircle(b.x, b.y, burstCount, 1.8, '#44ffee', Math.random() * Math.PI * 2);
+          }
+          break;
+      }
+      // Lissajous curve movement — drifts across entire arena
+      b.curveT += 0.008;
+      const targetX4 = b.curveCx + Math.sin(b.curveT * b.curveFx) * b.curveAx;
+      const targetY4 = b.curveCy + Math.sin(b.curveT * b.curveFy) * b.curveAy;
+      // Clamp to arena bounds
+      const clampedX = Math.max(50, Math.min(W - 50, targetX4));
+      const clampedY = Math.max(60, Math.min(H - 200, targetY4));
+      b.x = lerp(b.x, clampedX, 0.03);
+      b.y = lerp(b.y, clampedY, 0.03);
+      // Trail history for tentacle rendering
+      if (globalTime % 3 === 0) {
+        b.trailHistory.push({ x: b.x, y: b.y + 30 });
+        if (b.trailHistory.length > 40) b.trailHistory.shift();
+      }
+      // Tentacle trail bullets — drop slow bullets from trail
+      if (b.phaseState === 'solid' || b.phaseState === 'appearing') {
+        b.trailBulletTimer++;
+        const trailRate = b.phase >= 2 ? 12 : b.phase >= 1 ? 18 : 25;
+        if (b.trailBulletTimer >= trailRate) {
+          b.trailBulletTimer = 0;
+          // Drop bullet at current tail position
+          enemyBullets.push({ x: b.x + rand(-15, 15), y: b.y + 35, vx: rand(-0.3, 0.3), vy: 0.7 + Math.random() * 0.4, size: 3, color: '#88ffee', type: 'round' });
+        }
+      }
+      break;
+    }
+    case 5: { // Scarab: AI state machine — HOVER → TELEGRAPH → CHARGE → IMPACT → HOVER
+      // Update craters
+      for (let ci = b.craters.length - 1; ci >= 0; ci--) {
+        const cr = b.craters[ci];
+        cr.timer--;
+        if (cr.timer <= 0) { b.craters.splice(ci, 1); continue; }
+        // Crater bullet burst every 90 frames
+        if (cr.timer % 90 === 0) {
+          const count = b.phase >= 2 ? 8 : 6;
+          fireCircle(cr.x, cr.y, count, 1.8, '#ffaa44', Math.random() * Math.PI * 2);
+        }
+      }
+      const hoverDur = b.phase >= 2 ? 90 : b.phase >= 1 ? 120 : 150;
+      switch (b.aiState) {
+        case 'HOVER':
+          b.wingsSpread = true;
+          b.aiTimer++;
+          b.x = lerp(b.x, b.targetX, 0.025);
+          b.y = lerp(b.y, b.targetY + Math.sin(globalTime * 0.03) * 20, 0.02);
+          if (b.aiTimer > hoverDur) {
+            b.aiState = 'TELEGRAPH';
+            b.aiTimer = 0;
+          }
+          break;
+        case 'TELEGRAPH':
+          b.wingsSpread = false;
+          b.aiTimer++;
+          // Aim at player — compute charge heading
+          const dx5 = player.x - b.x, dy5 = player.y - b.y;
+          b.chargeHeading = Math.atan2(dy5, dx5);
+          if (b.aiTimer >= 48) { // 0.8 seconds telegraph
+            b.aiState = 'CHARGE';
+            b.aiTimer = 0;
+            b.charging = true;
+            b.maxBounces = b.phase >= 2 ? 3 : 2;
+            b.bouncesLeft = b.maxBounces;
+            const spd5 = b.chargeSpeed + b.phase * 0.8;
+            b.chargeVx = Math.cos(b.chargeHeading) * spd5;
+            b.chargeVy = Math.sin(b.chargeHeading) * spd5;
+          }
+          break;
+        case 'CHARGE':
+          b.x += b.chargeVx;
+          b.y += b.chargeVy;
+          b.aiTimer++;
+          // Wall bouncing
+          if (b.x < 30 || b.x > W - 30) {
+            b.chargeVx = -b.chargeVx;
+            b.x = Math.max(30, Math.min(W - 30, b.x));
+            b.bouncesLeft--;
+            // Small ring on bounce
+            fireCircle(b.x, b.y, 5, 1.5, '#ffaa44', Math.random() * Math.PI * 2);
+            shakeTimer = 3; shakeIntensity = 2;
+          }
+          if (b.y < 30 || b.y > H - 80) {
+            b.chargeVy = -b.chargeVy;
+            b.y = Math.max(30, Math.min(H - 80, b.y));
+            b.bouncesLeft--;
+            fireCircle(b.x, b.y, 5, 1.5, '#ffaa44', Math.random() * Math.PI * 2);
+            shakeTimer = 3; shakeIntensity = 2;
+          }
+          if (b.bouncesLeft <= 0 || b.aiTimer > 90) {
+            b.aiState = 'IMPACT';
+            b.aiTimer = 0;
+            b.charging = false;
+          }
+          break;
+        case 'IMPACT':
+          b.aiTimer++;
+          b.wingsSpread = true;
+          if (b.aiTimer === 1) {
+            // Shockwave ring + create crater
+            fireCircle(b.x, b.y, 12 + b.phase * 2, 2.5, '#ffcc44', 0);
+            shakeTimer = 8; shakeIntensity = 5;
+            spawnParticles(b.x, b.y, '#ff8800', 12, 4, 20, 3);
+            const craterDur = b.phase >= 2 ? 480 : 300; // 8s or 5s
+            b.craters.push({ x: b.x, y: b.y, timer: craterDur, maxTimer: craterDur });
+          }
+          if (b.aiTimer >= 30) { // 0.5s recovery
+            b.aiState = 'HOVER';
+            b.aiTimer = 0;
+            b.targetX = 60 + Math.random() * (W - 120);
+            b.targetY = 80 + Math.random() * 120;
+          }
+          break;
+      }
+      break;
+    }
+    case 6: { // Moldorm-style: rotate → walk → face player → charge → repeat
+      const lowHp = b.hp / b.maxHp < 0.33;
+      const spd = b.baseSpeed * (lowHp ? 1.4 : 1.0);
+      b.aiTimer++;
+      switch (b.aiState) {
+        case 'ROTATE':
+          if (b.aiTimer % 4 === 0) b.heading += b.rotateDir * (Math.PI / 8);
+          b.x += Math.cos(b.heading) * spd * 0.7;
+          b.y += Math.sin(b.heading) * spd * 0.7;
+          if (b.aiTimer >= b.aiDuration) {
+            b.aiState = 'WALK'; b.aiTimer = 0;
+            b.aiDuration = 10 + Math.floor(Math.random() * 14);
+          }
+          break;
+        case 'WALK':
+          b.x += Math.cos(b.heading) * spd;
+          b.y += Math.sin(b.heading) * spd;
+          if (b.aiTimer >= b.aiDuration) {
+            b._cycleStep = (b._cycleStep + 1) % 3;
+            if (b._cycleStep === 2) {
+              b.aiState = 'FACE_PLAYER'; b.aiTimer = 0;
+            } else {
+              b.aiState = 'ROTATE'; b.aiTimer = 0;
+              b.aiDuration = 32 + Math.floor(Math.random() * 32);
+              b.rotateDir = Math.random() < 0.5 ? 1 : -1;
+            }
+          }
+          break;
+        case 'FACE_PLAYER':
+          b.heading = Math.atan2(player.y - b.y, player.x - b.x);
+          b.aiState = 'CHARGE'; b.aiTimer = 0;
+          b.aiDuration = 40 + Math.floor(Math.random() * 20);
+          break;
+        case 'CHARGE':
+          b.x += Math.cos(b.heading) * spd * 1.6;
+          b.y += Math.sin(b.heading) * spd * 1.6;
+          if (b.aiTimer >= b.aiDuration) {
+            b.aiState = 'ROTATE'; b.aiTimer = 0;
+            b.aiDuration = 32 + Math.floor(Math.random() * 32);
+            b.rotateDir = Math.random() < 0.5 ? 1 : -1;
+          }
+          break;
+      }
+      // Boundary bouncing — reflect heading off walls
+      const sMargin = 25;
+      if (b.x < sMargin) { b.x = sMargin; b.heading = Math.PI - b.heading; }
+      if (b.x > W - sMargin) { b.x = W - sMargin; b.heading = Math.PI - b.heading; }
+      if (b.y < sMargin) { b.y = sMargin; b.heading = -b.heading; }
+      if (b.y > H - 140) { b.y = H - 140; b.heading = -b.heading; }
+      // Normalize heading to [-π, π]
+      while (b.heading > Math.PI) b.heading -= Math.PI * 2;
+      while (b.heading < -Math.PI) b.heading += Math.PI * 2;
+      // Record position history for trailing body
+      b.posHistory.push({ x: b.x, y: b.y, heading: b.heading });
+      if (b.posHistory.length > 500) b.posHistory.shift();
+      // Update segment positions from history
+      b.segments = [];
+      for (let i = 1; i <= b.segCount; i++) {
+        const hIdx = b.posHistory.length - 1 - i * b.segSpacing;
+        const r = Math.max(26 - i * 1.5, 14);
+        if (hIdx >= 0) {
+          const h = b.posHistory[hIdx];
+          b.segments.push({ x: h.x, y: h.y, heading: h.heading, r });
+        } else {
+          // Not enough history yet — place at head so segments bunch up
+          // and naturally separate as history accumulates
+          const src = b.posHistory.length > 0 ? b.posHistory[0] : b;
+          b.segments.push({ x: src.x, y: src.y, heading: src.heading, r });
+        }
+      }
+      break;
+    }
+    case 7: { // Sentinel: shield rotation + vulnerability windows + retreat
+      b.shieldsAlive = b.shields.filter(s => s.alive).length;
+      // Shield orbit speed — faster with fewer shields and higher phase
+      const baseOrbSpeed = 0.03 + b.phase * 0.01 + (4 - b.shieldsAlive) * 0.008;
+      // During vulnerability window, shields stop rotating
+      if (!b.vulnerabilityActive) {
+        b.orbAngle += baseOrbSpeed;
+      }
+      b.orbSpeed = baseOrbSpeed;
+      // Vulnerability window cooldown
+      b.vulnerabilityTimer++;
+      const vulnCooldown = b.shieldsAlive >= 3 ? 480 : b.shieldsAlive === 2 ? 400 : 360;
+      if (!b.vulnerabilityActive && b.vulnerabilityTimer >= vulnCooldown && b.shieldsAlive > 0) {
+        // Open vulnerability window — shields spread apart and stop
+        b.vulnerabilityActive = true;
+        b.vulnerabilityTimer = 0;
+        b.vulnerabilityDmgAccum = 0;
+      }
+      if (b.vulnerabilityActive) {
+        b.vulnerabilityTimer++;
+        const maxDur = 90 + (b.vulnerabilityDmgAccum >= 15 ? 60 : 0); // Extend if player dealt enough damage
+        if (b.vulnerabilityTimer >= maxDur) {
+          b.vulnerabilityActive = false;
+          b.vulnerabilityTimer = 0;
+        }
+      }
+      // Movement — slow drift normally, retreat dash when shield destroyed
+      if (b.retreatTimer > 0) {
+        b.retreatTimer--;
+        b.x = lerp(b.x, b.targetX, 0.08);
+        b.y = lerp(b.y, b.targetY, 0.04);
+      } else {
+        b.moveTimer++;
+        const movePeriod = b.shieldsAlive <= 1 && b.phase >= 2 ? 100 : 200;
+        const moveSpd = b.shieldsAlive <= 1 && b.phase >= 2 ? 0.025 : 0.01;
+        if (b.moveTimer > movePeriod) { b.moveTimer = 0; b.targetX = 80 + Math.random() * (W - 160); }
+        b.x = lerp(b.x, b.targetX, moveSpd);
+      }
+      b.y = lerp(b.y, b.targetY + Math.sin(globalTime * 0.02) * 15, 0.02);
+      break;
+    }
+    case 8: { // Hydra: movement + head tracking + regeneration + exposed state
+      // Count alive heads
+      b.headsAlive = b.heads.filter(h => h.alive).length;
+      // Movement — faster with fewer heads, thrashing when exposed
+      b.moveTimer++;
+      if (b.exposedActive) {
+        // Exposed: thrash wildly
+        b.x += Math.sin(globalTime * 0.3) * 3;
+        b.y = lerp(b.y, b.targetY + Math.sin(globalTime * 0.15) * 30, 0.05);
+        b.exposedTimer--;
+        if (b.exposedTimer <= 0) b.exposedActive = false;
+      } else {
+        const moveRate = b.headsAlive === 3 ? 140 : b.headsAlive === 2 ? 110 : b.headsAlive === 1 ? 80 : 60;
+        const moveSpeed = b.headsAlive === 3 ? 0.02 : b.headsAlive === 2 ? 0.03 : 0.04;
+        if (b.moveTimer > moveRate) { b.moveTimer = 0; b.targetX = 70 + Math.random() * (W - 140); }
+        b.x = lerp(b.x, b.targetX, moveSpeed);
+      }
+      // Head oscillation — wider sway with fewer heads (enraged)
+      const swayAmp = b.headsAlive === 3 ? 0.4 : b.headsAlive === 2 ? 0.6 : 0.8;
+      const swaySpeed = 0.05 + (3 - b.headsAlive) * 0.015;
+      b.headAngles[0] = Math.sin(globalTime * swaySpeed) * swayAmp;
+      b.headAngles[1] = Math.sin(globalTime * swaySpeed + 2.1) * swayAmp;
+      b.headAngles[2] = Math.sin(globalTime * swaySpeed + 4.2) * swayAmp;
+      // Compute head world positions
+      const neckLen = 65;
+      const headBaseAngles = [-0.7, 0, 0.7];
+      for (let h = 0; h < 3; h++) {
+        const a = headBaseAngles[h] + b.headAngles[h] - Math.PI / 2;
+        b.headPositions[h] = { x: b.x + Math.cos(a) * neckLen, y: b.y + Math.sin(a) * neckLen };
+      }
+      // Head regeneration
+      for (let h = 0; h < 3; h++) {
+        if (!b.heads[h].alive) {
+          b.heads[h].regenTimer--;
+          if (b.heads[h].regenTimer <= 0) {
+            // Regenerate head — stronger each time
+            b.heads[h].alive = true;
+            b.heads[h].regenCount++;
+            b.heads[h].maxHp = Math.floor(40 * (1 + 0.25 * b.heads[h].regenCount));
+            b.heads[h].hp = b.heads[h].maxHp;
+            // Regen burst
+            const hp = b.headPositions[h];
+            fireCircle(hp.x, hp.y, 10, 2, b.heads[h].regenCount > 1 ? '#ff88ff' : '#cc44ff', 0);
+            spawnParticles(hp.x, hp.y, '#cc44ff', 8, 3, 20, 3);
+          }
+        }
+      }
+      // Check for synchronized sever — all 3 heads dead within 5s window
+      if (b.headsAlive === 0 && !b.exposedActive) {
+        const now = globalTime;
+        const allRecent = b.lastSeverTimes.every(t => now - t < 300); // 5 seconds at 60fps
+        if (allRecent) {
+          b.exposedActive = true;
+          b.exposedTimer = 300; // 5 seconds
+          shakeTimer = 20; shakeIntensity = 8;
+          spawnExplosion(b.x, b.y, '#ff44ff', false);
+          // Clear all bullets as reward
+          enemyBullets.length = 0;
+        }
+      }
+      break;
+    }
   }
 }
 
@@ -1305,6 +2226,203 @@ function bossPattern3(b) {
     for (let i = 0; i < 8; i++) {
       enemyBullets.push({ x: b.x, y: b.y, vx: Math.cos(ba) * (2 + i * 0.4), vy: Math.sin(ba) * (2 + i * 0.4), size: 4, color: COLORS.bulletWhite, type: 'round' });
     }
+  }
+}
+
+// ---- MINIBOSS ATTACK PATTERNS ----
+
+// DRIFT JELLYFISH: Pulsing rings + dangling tentacle streams
+function bossPattern4(b) {
+  // No attacks while phased out or fading
+  if (b.phaseState === 'phased' || b.phaseState === 'fading') return;
+  const rate = b.phase === 2 ? 0.7 : b.phase === 1 ? 0.85 : 1;
+  // Gentle ring bursts
+  if (b.shootTimer % Math.floor(70 * rate) === 0) {
+    fireCircle(b.x, b.y, 8 + b.phase * 3, 1.5 + b.phase * 0.2, COLORS.bulletCyan, b.angle);
+  }
+  // Phase 1+: aimed shots during solid state
+  if (b.phase >= 1 && b.shootTimer % Math.floor(50 * rate) === 0) {
+    fireAimed(b.x, b.y, 2.8, COLORS.bulletPurple, 5);
+  }
+  // Phase 2: trail bullets gain slight homing (handled via curve)
+  if (b.phase === 2 && b.shootTimer % Math.floor(35 * rate) === 0) {
+    // Curved tentacle shots that arc toward player
+    const toPlayer = angleToward(b, player);
+    for (let i = 0; i < 3; i++) {
+      const a = toPlayer + (i - 1) * 0.4;
+      enemyBullets.push({ x: b.x, y: b.y + 20, vx: Math.cos(a) * 1.5, vy: Math.sin(a) * 1.5, size: 4, color: '#cc66ff', type: 'round' });
+    }
+  }
+}
+
+// IRON SCARAB: Charge + spread shots + ground pound shockwave
+function bossPattern5(b) {
+  const rate = b.phase === 2 ? 0.65 : b.phase === 1 ? 0.8 : 1;
+  // HOVER: defensive fan burst
+  if (b.aiState === 'HOVER' && b.shootTimer % Math.floor(50 * rate) === 0) {
+    fireFan(b.x, b.y, 5 + b.phase * 2, 0.7, 2.5 + b.phase * 0.3, COLORS.bulletOrange, Math.PI / 2);
+  }
+  // HOVER phase 1+: aimed double-shot
+  if (b.aiState === 'HOVER' && b.phase >= 1 && b.shootTimer % Math.floor(40 * rate) === 0) {
+    fireAimed(b.x - 15, b.y, 3, COLORS.bulletRed, 5);
+    fireAimed(b.x + 15, b.y, 3, COLORS.bulletRed, 5);
+  }
+  // CHARGE: trail of bullets along charge path
+  if (b.aiState === 'CHARGE' && b.aiTimer % 5 === 0) {
+    // Perpendicular spray — bullets go sideways from charge direction
+    const cAngle = Math.atan2(b.chargeVy, b.chargeVx);
+    const perpAngle = cAngle + Math.PI / 2;
+    enemyBullets.push({ x: b.x, y: b.y, vx: Math.cos(perpAngle) * 1.5, vy: Math.sin(perpAngle) * 1.5, size: 4, color: COLORS.bulletOrange, type: 'round' });
+    enemyBullets.push({ x: b.x, y: b.y, vx: -Math.cos(perpAngle) * 1.5, vy: -Math.sin(perpAngle) * 1.5, size: 4, color: COLORS.bulletOrange, type: 'round' });
+  }
+  // Phase 2: additional forward spray during charge
+  if (b.aiState === 'CHARGE' && b.phase >= 2 && b.aiTimer % 8 === 0) {
+    const cAngle = Math.atan2(b.chargeVy, b.chargeVx);
+    enemyBullets.push({ x: b.x, y: b.y, vx: Math.cos(cAngle) * 3, vy: Math.sin(cAngle) * 3, size: 5, color: COLORS.bulletYellow, type: 'rice' });
+  }
+}
+
+// NEBULA SERPENT (Moldorm): Forward spray + poison trail from body + aimed burst
+function bossPattern6(b) {
+  const rate = b.phase === 2 ? 0.6 : b.phase === 1 ? 0.8 : 1;
+  // Forward spray from head in direction of travel
+  if (b.shootTimer % Math.floor(10 * rate) === 0) {
+    const spread = 0.35;
+    const angle = b.heading + (Math.random() - 0.5) * spread;
+    const spd = 2.8 + b.phase * 0.3;
+    enemyBullets.push({ x: b.x, y: b.y, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd, size: 4, color: '#44ff88', type: 'round' });
+  }
+  // Poison trail: body segments drop slow bullets
+  if (b.shootTimer % Math.floor(25 * rate) === 0 && b.segments.length > 2) {
+    const midSeg = b.segments[Math.floor(b.segments.length / 2)];
+    enemyBullets.push({ x: midSeg.x, y: midSeg.y, vx: (Math.random() - 0.5) * 0.5, vy: 1.2, size: 3, color: '#22ff66', type: 'round' });
+  }
+  // During charge: rapid burst from head
+  if (b.aiState === 'CHARGE' && b.shootTimer % Math.floor(6 * rate) === 0) {
+    const a = b.heading + (Math.random() - 0.5) * 0.5;
+    enemyBullets.push({ x: b.x, y: b.y, vx: Math.cos(a) * 3.5, vy: Math.sin(a) * 3.5, size: 5, color: '#88ffaa', type: 'round' });
+  }
+  // Phase 1+: aimed fan burst
+  if (b.phase >= 1 && b.shootTimer % Math.floor(55 * rate) === 0) {
+    fireFan(b.x, b.y, 3 + b.phase * 2, 0.5, 3, '#88ffaa', angleToward(b, player));
+  }
+  // Phase 2: tail drops spiral mines
+  if (b.phase === 2 && b.shootTimer % 80 === 0 && b.segments.length > 0) {
+    const tail = b.segments[b.segments.length - 1];
+    fireCircle(tail.x, tail.y, 6 + b.phase * 2, 1.5, '#22ff66', b.angle);
+  }
+}
+
+// PLASMA SENTINEL: Shield-dependent attacks — more aggressive with fewer shields
+function bossPattern7(b) {
+  // No attacks during vulnerability window — player's reward for timing
+  if (b.vulnerabilityActive) return;
+  const rate = b.phase === 2 ? 0.6 : b.phase === 1 ? 0.8 : 1;
+  const sa = b.shieldsAlive;
+  // Alive shield orbs fire aimed shots
+  if (b.shootTimer % Math.floor(35 * rate) === 0) {
+    for (let i = 0; i < b.orbCount; i++) {
+      if (!b.shields[i].alive) continue;
+      const oa = b.orbAngle + (i / b.orbCount) * Math.PI * 2;
+      const ox = b.x + Math.cos(oa) * 55;
+      const oy = b.y + Math.sin(oa) * 55;
+      fireAimed(ox, oy, 2.5 + b.phase * 0.3, COLORS.bulletCyan, 4);
+    }
+  }
+  // Central beam burst — stronger with fewer shields
+  const beamRate = sa >= 3 ? 80 : sa === 2 ? 65 : sa === 1 ? 50 : 35;
+  if (b.shootTimer % Math.floor(beamRate * rate) === 0) {
+    const count = (6 + b.phase * 2) + (4 - sa) * 2;
+    for (let i = 0; i < count; i++) {
+      const a = angleToward(b, player) + (i - (count - 1) / 2) * 0.07;
+      enemyBullets.push({ x: b.x, y: b.y, vx: Math.cos(a) * (3 + i * 0.2), vy: Math.sin(a) * (3 + i * 0.2), size: 4, color: '#4488ff', type: 'round' });
+    }
+  }
+  // Phase 1+: barrier walls
+  if (b.phase >= 1 && b.shootTimer % Math.floor(100 * rate) === 0) {
+    for (let i = 0; i < 8; i++) {
+      enemyBullets.push({ x: 30 + i * (W - 60) / 7, y: b.y + 30, vx: 0, vy: 2, size: 5, color: COLORS.bulletPurple, type: 'rice' });
+    }
+  }
+  // 0 shields — exposed fury: rapid rotating cross + aimed fire
+  if (sa === 0) {
+    // Rotating cross
+    if (b.shootTimer % Math.floor(5 * rate) === 0) {
+      for (let i = 0; i < 4; i++) {
+        const a = b.orbAngle * 2 + (i / 4) * Math.PI * 2;
+        enemyBullets.push({ x: b.x, y: b.y, vx: Math.cos(a) * 2.5, vy: Math.sin(a) * 2.5, size: 3, color: '#88aaff', type: 'round' });
+      }
+    }
+    // Rapid aimed shots
+    if (b.shootTimer % Math.floor(20 * rate) === 0) {
+      fireAimed(b.x, b.y, 3.5, '#ff8844', 5);
+    }
+  } else if (b.phase === 2 && b.shootTimer % Math.floor(8) === 0) {
+    // Phase 2 with shields: slower rotating cross
+    for (let i = 0; i < 4; i++) {
+      const a = b.orbAngle * 1.5 + (i / 4) * Math.PI * 2;
+      enemyBullets.push({ x: b.x, y: b.y, vx: Math.cos(a) * 2, vy: Math.sin(a) * 2, size: 3, color: '#88aaff', type: 'round' });
+    }
+  }
+}
+
+// VOID HYDRA: Three heads fire independently + combined rage
+function bossPattern8(b) {
+  // No attacks during exposed state — body is vulnerable
+  if (b.exposedActive) return;
+  const rate = b.phase === 2 ? 0.55 : b.phase === 1 ? 0.75 : 1;
+  // Enrage: fewer heads = faster attacks from survivors
+  const enrage = b.headsAlive === 3 ? 1.0 : b.headsAlive === 2 ? 0.7 : b.headsAlive === 1 ? 0.5 : 1.0;
+  const headColors = [COLORS.bulletRed, COLORS.bulletCyan, COLORS.bulletPurple];
+  const hp = b.headPositions;
+  const heads = b.heads;
+
+  // Head 1 (red): aimed rapid fire — after regen: triple shot
+  if (heads[0].alive && b.shootTimer % Math.floor(35 * rate * enrage) === 0) {
+    if (heads[0].regenCount > 0) {
+      // Upgraded: triple aimed shot
+      for (let i = -1; i <= 1; i++) {
+        const a = angleToward(hp[0], player) + i * 0.2;
+        enemyBullets.push({ x: hp[0].x, y: hp[0].y, vx: Math.cos(a) * (3 + b.phase * 0.3), vy: Math.sin(a) * (3 + b.phase * 0.3), size: 5, color: headColors[0], type: 'rice' });
+      }
+    } else {
+      fireAimed(hp[0].x, hp[0].y, 3 + b.phase * 0.3, headColors[0], 5);
+    }
+  }
+  // Head 2 (blue): ring bursts — after regen: double ring
+  if (heads[1].alive && b.shootTimer % Math.floor(60 * rate * enrage) === 0) {
+    fireCircle(hp[1].x, hp[1].y, 8 + b.phase * 2, 2, headColors[1], b.headAngles[1]);
+    if (heads[1].regenCount > 0) {
+      fireCircle(hp[1].x, hp[1].y, 8 + b.phase * 2, 1.3, headColors[1], b.headAngles[1] + Math.PI / 8);
+    }
+  }
+  // Head 3 (purple): fan spray — after regen: fan + homing center
+  if (heads[2].alive && b.shootTimer % Math.floor(45 * rate * enrage) === 0) {
+    fireFan(hp[2].x, hp[2].y, 4 + b.phase, 0.6, 2.5, headColors[2], angleToward(hp[2], player));
+    if (heads[2].regenCount > 0) {
+      fireAimed(hp[2].x, hp[2].y, 2.0, '#ff88ff', 6);
+    }
+  }
+  // Synchronized breath: all ALIVE heads fire together
+  if (b.phase >= 1 && b.shootTimer % Math.floor(80 * rate * enrage) === 0) {
+    for (let h = 0; h < 3; h++) {
+      if (!heads[h].alive) continue;
+      for (let i = 0; i < 3; i++) {
+        const a = angleToward(hp[h], player) + (i - 1) * 0.15;
+        enemyBullets.push({ x: hp[h].x, y: hp[h].y, vx: Math.cos(a) * 3.5, vy: Math.sin(a) * 3.5, size: 5, color: headColors[h], type: 'rice' });
+      }
+    }
+  }
+  // Phase 2: alive heads spiral
+  if (b.phase === 2 && b.shootTimer % Math.floor(100 * enrage) === 0) {
+    for (let h = 0; h < 3; h++) {
+      if (!heads[h].alive) continue;
+      fireSpiral(hp[h].x, hp[h].y, 2, 1.8, headColors[h], b.angle + h * 2, 4);
+    }
+  }
+  // Body desperation: when 0 heads alive and NOT exposed, body fires rings
+  if (b.headsAlive === 0 && !b.exposedActive && b.shootTimer % 40 === 0) {
+    fireCircle(b.x, b.y, 10, 2.5, '#cc44ff', b.angle);
   }
 }
 
@@ -1407,12 +2525,490 @@ function spawnWave() {
   }
 }
 
+// ---- WAVE FORMATION PATTERNS ----
+// Each function spawns enemies using the existing path system.
+// Used by both the campaign wave spawner and can be called by endless mode.
+
+const WAVE_PATTERNS = {
+  VERTICAL_COLUMN(opts) {
+    const type = opts.types[0] || 'grunt';
+    const n = opts.count || 5;
+    for (let i = 0; i < n; i++) {
+      const ii = i;
+      setTimeout(() => {
+        const sx = W / 2 - ((n-1)/2 - ii) * 50;
+        const e = createEnemy(type, sx, -30);
+        e.path = t => ({ x: sx, y: -30 + t * 200 });
+        e.pathSpeed = 0.005;
+        enemies.push(e);
+      }, i * 160);
+    }
+  },
+
+  SIDE_SWOOP(opts) {
+    const type = opts.types[0] || 'swooper';
+    const n = opts.count || 6;
+    const fromLeft = opts.side === 'left';
+    for (let i = 0; i < n; i++) {
+      const ii = i;
+      setTimeout(() => {
+        const startX = fromLeft ? -30 : W + 30;
+        const dir = fromLeft ? 1 : -1;
+        const sy = 100 + ii * 30;
+        const e = createEnemy(type, startX, sy);
+        e.path = t => ({ x: startX + t * 400 * dir, y: sy + Math.sin(t * 8) * 60 });
+        e.pathSpeed = 0.006;
+        enemies.push(e);
+      }, i * 100);
+    }
+  },
+
+  SPINNER_DESCENT(opts) {
+    const type = opts.types[0] || 'spinner';
+    const n = opts.count || 4;
+    for (let i = 0; i < n; i++) {
+      const sx = 80 + i * (W - 160) / Math.max(1, n - 1);
+      const e = createEnemy(type, sx, -30);
+      const ii = i;
+      e.path = t => ({ x: sx + Math.sin(t * 4 + ii) * 30, y: -30 + t * 150 });
+      e.pathSpeed = 0.005;
+      enemies.push(e);
+    }
+  },
+
+  CHEVRON(opts) {
+    const type = opts.types[0] || 'grunt';
+    const n = opts.count || 5;
+    const cx = W / 2;
+    for (let i = 0; i < n; i++) {
+      const ii = i;
+      setTimeout(() => {
+        // V-shape: leader at center, wings spread out
+        const row = ii === 0 ? 0 : Math.ceil(ii / 2);
+        const side = ii % 2 === 0 ? 0 : (ii % 4 < 2 ? -1 : 1);
+        const sx = cx + side * row * 45;
+        const startY = -30 - row * 20;
+        const e = createEnemy(type, sx, startY);
+        e.path = t => ({ x: sx + side * t * 20, y: startY + t * 220 });
+        e.pathSpeed = 0.004;
+        enemies.push(e);
+      }, i * 80);
+    }
+  },
+
+  PINCER(opts) {
+    const type = opts.types[0] || 'swooper';
+    const n = opts.count || 6;
+    const half = Math.ceil(n / 2);
+    for (let i = 0; i < half; i++) {
+      const ii = i;
+      setTimeout(() => {
+        // Left group
+        const eL = createEnemy(type, -30, 80 + ii * 40);
+        eL.path = t => ({
+          x: -30 + t * 300 + Math.sin(t * 4) * 20,
+          y: 80 + ii * 40 + t * 100
+        });
+        eL.pathSpeed = 0.005;
+        enemies.push(eL);
+        // Right group
+        const eR = createEnemy(type, W + 30, 80 + ii * 40);
+        eR.path = t => ({
+          x: W + 30 - t * 300 - Math.sin(t * 4) * 20,
+          y: 80 + ii * 40 + t * 100
+        });
+        eR.pathSpeed = 0.005;
+        enemies.push(eR);
+      }, i * 120);
+    }
+  },
+
+  CURTAIN_WALL(opts) {
+    const n = opts.count || 7;
+    const types = opts.types || ['grunt'];
+    for (let i = 0; i < n; i++) {
+      const sx = 40 + i * ((W - 80) / (n - 1));
+      // Put a tank at random positions in the wall
+      const type = (types.includes('tank') && (i === 2 || i === n - 3)) ? 'tank' : types[0];
+      const e = createEnemy(type, sx, -30);
+      const sxi = sx;
+      e.path = t => ({ x: sxi, y: -30 + t * 160 });
+      e.pathSpeed = 0.003;
+      enemies.push(e);
+    }
+  },
+
+  STREAM(opts) {
+    const type = opts.types[0] || 'grunt';
+    const n = opts.count || 8;
+    const fromLeft = opts.side !== 'right';
+    const startX = fromLeft ? -30 : W + 30;
+    const dir = fromLeft ? 1 : -1;
+    for (let i = 0; i < n; i++) {
+      const ii = i;
+      setTimeout(() => {
+        const e = createEnemy(type, startX, -20);
+        e.path = t => ({
+          x: startX + t * 500 * dir,
+          y: -20 + t * 100 + Math.sin(t * 6 + ii * 0.5) * 50
+        });
+        e.pathSpeed = 0.005;
+        enemies.push(e);
+      }, i * 120);
+    }
+  },
+
+  CROSSING_STREAMS(opts) {
+    const type = opts.types[0] || 'grunt';
+    const n = opts.count || 8;
+    const half = Math.ceil(n / 2);
+    for (let i = 0; i < half; i++) {
+      const ii = i;
+      setTimeout(() => {
+        // Left to right stream
+        const e1 = createEnemy(type, -20, -20 - ii * 10);
+        e1.path = t => ({ x: -20 + t * 500, y: -20 + t * 300 - ii * 10 });
+        e1.pathSpeed = 0.004;
+        enemies.push(e1);
+        // Right to left stream
+        const e2 = createEnemy(type, W + 20, -20 - ii * 10);
+        e2.path = t => ({ x: W + 20 - t * 500, y: -20 + t * 300 - ii * 10 });
+        e2.pathSpeed = 0.004;
+        enemies.push(e2);
+      }, i * 140);
+    }
+  },
+
+  SPLIT(opts) {
+    const type = opts.types[0] || 'grunt';
+    const n = opts.count || 6;
+    for (let i = 0; i < n; i++) {
+      const sx = W / 2 + (i - n / 2) * 15;
+      const e = createEnemy(type, sx, -30);
+      const side = i < n / 2 ? -1 : 1;
+      const sxi = sx;
+      e.path = t => {
+        if (t < 0.4) return { x: sxi, y: -30 + t * 600 };
+        const splitT = t - 0.4;
+        return { x: sxi + splitT * 300 * side, y: -30 + 0.4 * 600 + splitT * 200 };
+      };
+      e.pathSpeed = 0.004;
+      enemies.push(e);
+    }
+  },
+
+  CAGE(opts) {
+    const n = opts.count || 8;
+    const types = opts.types || ['grunt'];
+    const tankType = types.includes('tank') ? 'tank' : types[0];
+    const gruntType = types[0];
+    // Rectangle perimeter at y=200-400, x=80-400
+    const positions = [
+      {x:80,y:200}, {x:240,y:200}, {x:400,y:200},    // top
+      {x:400,y:300}, {x:400,y:400},                    // right
+      {x:240,y:400}, {x:80,y:400},                     // bottom
+      {x:80,y:300},                                      // left
+    ];
+    for (let i = 0; i < Math.min(n, positions.length); i++) {
+      const ii = i;
+      const target = positions[i];
+      const type = i === positions.length - 1 ? tankType : gruntType;
+      setTimeout(() => {
+        const e = createEnemy(type, target.x, -30);
+        const tx = target.x, ty = target.y;
+        e.path = t => {
+          if (t < 0.3) return { x: tx, y: -30 + t / 0.3 * (ty + 30) };
+          return { x: tx + Math.sin((t - 0.3) * 4) * 10, y: ty };
+        };
+        e.pathSpeed = 0.003;
+        enemies.push(e);
+      }, i * 80);
+    }
+  },
+
+  BRACKET(opts) {
+    const types = opts.types || ['tank', 'grunt'];
+    const sideType = types[0] || 'tank';
+    const centerType = types[1] || types[0] || 'spinner';
+    // Left column
+    for (let i = 0; i < 3; i++) {
+      const sy = 100 + i * 100;
+      const e = createEnemy(sideType, 50, -30);
+      e.path = t => ({ x: 50 + Math.sin(t * 3) * 15, y: -30 + t * (sy + 30) / 0.5 });
+      e.pathSpeed = 0.003;
+      enemies.push(e);
+    }
+    // Right column
+    for (let i = 0; i < 3; i++) {
+      const sy = 100 + i * 100;
+      const e = createEnemy(sideType, W - 50, -30);
+      e.path = t => ({ x: W - 50 + Math.sin(t * 3) * 15, y: -30 + t * (sy + 30) / 0.5 });
+      e.pathSpeed = 0.003;
+      enemies.push(e);
+    }
+    // Center threat
+    setTimeout(() => {
+      const e = createEnemy(centerType, W / 2, -30);
+      e.path = t => ({ x: W / 2 + Math.sin(t * 5) * 60, y: -30 + t * 150 });
+      e.pathSpeed = 0.004;
+      enemies.push(e);
+    }, 500);
+  },
+
+  ANCHOR(opts) {
+    const types = opts.types || ['tank', 'grunt'];
+    const centerType = types[0] || 'tank';
+    const orbitType = types[1] || types[0] || 'grunt';
+    // Center tank
+    const tank = createEnemy(centerType, W / 2, -40);
+    tank.path = t => ({ x: W / 2 + Math.sin(t * 2) * 40, y: Math.min(-40 + t * 200, 200) });
+    tank.pathSpeed = 0.004;
+    enemies.push(tank);
+    // Orbiting escorts
+    setTimeout(() => {
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2;
+        const e = createEnemy(orbitType, W / 2, 200);
+        const ai = a;
+        e.path = t => ({
+          x: W / 2 + Math.sin(t * 2) * 40 + Math.cos(ai + t * 8) * 80,
+          y: 200 + Math.sin(ai + t * 8) * 80 + t * 30
+        });
+        e.pathSpeed = 0.003;
+        enemies.push(e);
+      }
+    }, 600);
+  },
+
+  SNIPER_ALLEY(opts) {
+    const n = opts.count || 3;
+    for (let i = 0; i < n; i++) {
+      const ii = i;
+      setTimeout(() => {
+        const sx = 100 + ii * 140;
+        const targetY = 150 + ii * 80;
+        const e = createEnemy('sniper', sx, -30);
+        e.path = t => {
+          if (t < 0.4) return { x: sx, y: -30 + t / 0.4 * (targetY + 30) };
+          return { x: sx + Math.sin((t - 0.4) * 5) * 30, y: targetY };
+        };
+        e.pathSpeed = 0.003;
+        enemies.push(e);
+      }, i * 500);
+    }
+  },
+
+  REVOLVING_DOOR(opts) {
+    const types = opts.types || ['spinner', 'tank', 'grunt'];
+    const positions = [
+      { dx: -50, dy: -50 }, { dx: 50, dy: -50 },
+      { dx: 50, dy: 50 },  { dx: -50, dy: 50 },
+    ];
+    const cx = W / 2;
+    for (let i = 0; i < 4; i++) {
+      const type = types[i % types.length];
+      const p = positions[i];
+      const e = createEnemy(type, cx + p.dx, -60);
+      const pdx = p.dx, pdy = p.dy;
+      e.path = t => {
+        const cy = Math.min(-60 + t * 300, 250);
+        const rotT = t * 1.5;
+        const cos = Math.cos(rotT), sin = Math.sin(rotT);
+        return {
+          x: cx + pdx * cos - pdy * sin,
+          y: cy + pdx * sin + pdy * cos
+        };
+      };
+      e.pathSpeed = 0.003;
+      enemies.push(e);
+    }
+  },
+
+  BREATHING_RING(opts) {
+    const type = opts.types[0] || 'spinner';
+    const n = opts.count || 6;
+    const cx = W / 2;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const e = createEnemy(type, cx, -30);
+      const ai = a;
+      e.path = t => {
+        const cy = Math.min(-30 + t * 300, 280);
+        const radius = 80 + Math.sin(t * 5) * 60;
+        return {
+          x: cx + Math.cos(ai + t * 2) * radius,
+          y: cy + Math.sin(ai + t * 2) * radius * 0.5
+        };
+      };
+      e.pathSpeed = 0.003;
+      enemies.push(e);
+    }
+  },
+
+  SPOKE_WHEEL(opts) {
+    const types = opts.types || ['spinner', 'grunt'];
+    const centerType = types[0] || 'spinner';
+    const spokeType = types[1] || types[0] || 'grunt';
+    // Center spinner
+    const center = createEnemy(centerType, W / 2, -40);
+    center.path = t => ({ x: W / 2, y: Math.min(-40 + t * 200, 220) + Math.sin(t * 3) * 20 });
+    center.pathSpeed = 0.003;
+    enemies.push(center);
+    // 4 spokes
+    setTimeout(() => {
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2;
+        const e = createEnemy(spokeType, W / 2, 220);
+        const ai = a;
+        e.path = t => ({
+          x: W / 2 + Math.cos(ai + t * 6) * 100,
+          y: 220 + Math.sin(t * 3) * 20 + Math.sin(ai + t * 6) * 100
+        });
+        e.pathSpeed = 0.003;
+        enemies.push(e);
+      }
+    }, 400);
+  },
+
+  ESCALATION_LADDER(opts) {
+    const types = opts.types || ['grunt', 'spinner', 'sniper'];
+    // Sub-wave 1: 3 of type 0
+    for (let i = 0; i < 3; i++) {
+      const sx = W / 2 + (i - 1) * 60;
+      const e = createEnemy(types[0], sx, -30);
+      const sxi = sx;
+      e.path = t => ({ x: sxi, y: -30 + t * 180 });
+      e.pathSpeed = 0.005;
+      enemies.push(e);
+    }
+    // Sub-wave 2: 4 of type 0 + 1 of type 1
+    setTimeout(() => {
+      for (let i = 0; i < 4; i++) {
+        const sx = 60 + i * 120;
+        const e = createEnemy(types[0], sx, -30);
+        const sxi = sx;
+        e.path = t => ({ x: sxi, y: -30 + t * 180 });
+        e.pathSpeed = 0.005;
+        enemies.push(e);
+      }
+      const e = createEnemy(types[1] || types[0], W / 2, -30);
+      e.path = t => ({ x: W / 2 + Math.sin(t * 4) * 40, y: -30 + t * 150 });
+      e.pathSpeed = 0.004;
+      enemies.push(e);
+    }, 2000);
+    // Sub-wave 3: 5 of type 0 + 1 of type 1 + 1 of type 2
+    setTimeout(() => {
+      for (let i = 0; i < 5; i++) {
+        const sx = 40 + i * 100;
+        const e = createEnemy(types[0], sx, -30);
+        const sxi = sx;
+        e.path = t => ({ x: sxi, y: -30 + t * 200 });
+        e.pathSpeed = 0.005;
+        enemies.push(e);
+      }
+      const e1 = createEnemy(types[1] || types[0], 120, -30);
+      e1.path = t => ({ x: 120 + Math.sin(t * 4) * 40, y: -30 + t * 150 });
+      e1.pathSpeed = 0.004;
+      enemies.push(e1);
+      const e2 = createEnemy(types[2] || types[1] || types[0], 360, -30);
+      e2.path = t => ({ x: 360 + Math.sin(t * 4) * 40, y: -30 + t * 150 });
+      e2.pathSpeed = 0.004;
+      enemies.push(e2);
+    }, 4000);
+  },
+
+  DECOY_AND_AMBUSH(opts) {
+    const types = opts.types || ['grunt', 'spinner'];
+    const decoyType = types[0];
+    const ambushType = types[1] || 'sniper';
+    // Decoy V
+    for (let i = 0; i < 3; i++) {
+      const sx = W / 2 + (i - 1) * 50;
+      const e = createEnemy(decoyType, sx, -30);
+      const sxi = sx;
+      e.path = t => ({ x: sxi, y: -30 + t * 200 });
+      e.pathSpeed = 0.005;
+      enemies.push(e);
+    }
+    // Ambush flankers (delayed)
+    setTimeout(() => {
+      const eL = createEnemy(ambushType, -30, 280);
+      eL.path = t => {
+        if (t < 0.3) return { x: -30 + t / 0.3 * 90, y: 280 };
+        return { x: 60 + Math.sin((t - 0.3) * 5) * 20, y: 280 };
+      };
+      eL.pathSpeed = 0.003;
+      enemies.push(eL);
+      const eR = createEnemy(ambushType, W + 30, 280);
+      eR.path = t => {
+        if (t < 0.3) return { x: W + 30 - t / 0.3 * 90, y: 280 };
+        return { x: W - 60 + Math.sin((t - 0.3) * 5) * 20, y: 280 };
+      };
+      eR.pathSpeed = 0.003;
+      enemies.push(eR);
+    }, 800);
+  },
+
+  FALSE_RETREAT(opts) {
+    const type = opts.types[0] || 'swooper';
+    const n = opts.count || 5;
+    for (let i = 0; i < n; i++) {
+      const sx = 80 + i * ((W - 160) / Math.max(1, n - 1));
+      const e = createEnemy(type, sx, -30);
+      const sxi = sx;
+      e.path = t => {
+        if (t < 0.3) return { x: sxi, y: -30 + t / 0.3 * 330 };         // descend to 300
+        if (t < 0.5) return { x: sxi, y: 300 - (t - 0.3) / 0.2 * 200 }; // retreat to 100
+        return { x: sxi + Math.sin(t * 8) * 30, y: 100 + (t - 0.5) * 600 }; // fast dive
+      };
+      e.pathSpeed = 0.004;
+      enemies.push(e);
+    }
+  },
+};
+
+// ---- CAMPAIGN WAVE SPAWNER ----
+function spawnCampaignWave() {
+  if (!campaignLevel) return;
+  const waves = campaignLevel.waves;
+  if (campaignWaveIndex >= waves.length) {
+    campaignComplete = true;
+    return;
+  }
+
+  const waveDef = waves[campaignWaveIndex];
+  campaignWaveIndex++;
+  wave = campaignWaveIndex;
+  waveTimer = 0;
+
+  if (waveDef.pattern === 'BOSS') {
+    const boss = createBoss(waveDef.bossType);
+    boss.hp = waveDef.bossHP;
+    boss.maxHp = waveDef.bossHP;
+    bosses.push(boss);
+    return;
+  }
+
+  const patternFn = WAVE_PATTERNS[waveDef.pattern];
+  if (patternFn) {
+    patternFn(waveDef);
+  }
+}
+
 // ---- ITEMS ----
 function spawnItem(x, y, type) {
   items.push({ x, y, vy: -2, gravity: 0.05, type, life: 300, size: 8, collected: false });
 }
 
 // ---- ROGUELIKE POWERUP FUNCTIONS ----
+function applyModFx(mods, fx) {
+  for (const [key, val] of Object.entries(fx)) {
+    if (typeof val === 'boolean') mods[key] = mods[key] || val;
+    else if (key.endsWith('Mult') || key.endsWith('Pct')) mods[key] *= val;
+    else if (val !== null) mods[key] += val;
+  }
+}
+
 function resolveModifiers() {
   const mods = {
     damageMult: 1, shootDelayMult: 1, bulletSpeedMult: 1,
@@ -1424,16 +3020,39 @@ function resolveModifiers() {
     orbitalBlades: 0, bulletEatChance: 0,
     chainTargets: 0, chainDamagePct: 0,
     maxHpBonus: 0, maxHpOverride: null,
+    bombBonus: 0, extraStreams: 0, sideShots: 0,
+    hitboxShrink: 0, regenInterval: 0, reflectChance: 0,
+    dropRateMult: 1, killHealChance: 0,
   };
+
+  // Layer 1: Equipment (campaign only)
+  if (gameMode === 'campaign') {
+    const eq = saveData.equipped;
+    for (const slotId of Object.values(eq)) {
+      if (!slotId) continue;
+      const def = EQUIPMENT_DEFS[slotId];
+      if (def && def.effect) {
+        const fx = {};
+        def.effect(fx);
+        // The effect function mutates the passed object directly
+      }
+    }
+    // Re-apply using a temporary object approach
+    for (const slotId of Object.values(eq)) {
+      if (!slotId) continue;
+      const def = EQUIPMENT_DEFS[slotId];
+      if (def && def.effect) {
+        def.effect(mods);
+      }
+    }
+  }
+
+  // Layer 2: Roguelike powerups (both modes)
   for (const [id, stacks] of Object.entries(runPowerups.collected)) {
     const def = ROGUELIKE_POWERUPS.find(p => p.id === id);
     if (!def) continue;
     const fx = def.effect(stacks);
-    for (const [key, val] of Object.entries(fx)) {
-      if (typeof val === 'boolean') mods[key] = mods[key] || val;
-      else if (key.endsWith('Mult') || key.endsWith('Pct')) mods[key] *= val;
-      else if (val !== null) mods[key] += val;
-    }
+    applyModFx(mods, fx);
   }
   resolvedMods = mods;
 }
@@ -1722,15 +3341,15 @@ function drawPlayer() {
   if (!p.alive) return;
 
   const focused = isFocused();
-  const cfg = SHIP_CONFIGS[selectedShip];
+  const cfg = gameMode === 'campaign' ? CAMPAIGN_SHIP : SHIP_CONFIGS[selectedShip];
 
   // Draw ship body
   if (cfg.drawType === 'foozle') {
     drawPlayerFoozle();
   } else if (cfg.drawType === 'kenney2') {
-    drawPlayerKenney('ship2Base', ['ship2Dmg1', 'ship2Dmg2', 'ship2Dmg3'], '#ff4466');
+    drawPlayerKenney(cfg.baseSprite || 'ship2Base', cfg.dmgSprites || ['ship2Dmg1', 'ship2Dmg2', 'ship2Dmg3'], cfg.color || '#ff4466');
   } else {
-    drawPlayerKenney('ship3Base', ['ship3Dmg1', 'ship3Dmg2', 'ship3Dmg3'], '#44ff88');
+    drawPlayerKenney(cfg.baseSprite || 'ship3Base', cfg.dmgSprites || ['ship3Dmg1', 'ship3Dmg2', 'ship3Dmg3'], cfg.color || '#44ff88');
   }
 
   // Shield bomb bubble (Bastion)
@@ -1878,16 +3497,457 @@ function drawEnemy(e) {
 }
 
 // ---- DRAW BOSS ----
+function drawMinibossExtras(b, drawW, drawH) {
+  const t = globalTime;
+  switch (b.type) {
+    case 4: { // Jellyfish: phase-shifting glow + flowing tentacles + trail
+      // Phase-shift alpha
+      let phaseAlpha4 = 1.0;
+      if (b.phaseState === 'fading') phaseAlpha4 = 1.0 - b.phaseTimer / 30;
+      else if (b.phaseState === 'phased') phaseAlpha4 = 0.15 + Math.sin(t * 0.1) * 0.05;
+      else if (b.phaseState === 'appearing') phaseAlpha4 = b.phaseTimer / 30;
+      ctx.globalAlpha = phaseAlpha4;
+      // Trail visualization (in world space)
+      if (b.trailHistory.length > 2) {
+        ctx.save();
+        ctx.translate(-b.x, -b.y); // World coords
+        ctx.globalCompositeOperation = 'lighter';
+        for (let ti = 1; ti < b.trailHistory.length; ti++) {
+          const tp = b.trailHistory[ti - 1];
+          const tc = b.trailHistory[ti];
+          const trailAlpha = (ti / b.trailHistory.length) * 0.2 * phaseAlpha4;
+          ctx.strokeStyle = `rgba(68, 255, 238, ${trailAlpha})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(tp.x, tp.y); ctx.lineTo(tc.x, tc.y); ctx.stroke();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.restore();
+      }
+      // Tentacle glow lines
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 7; i++) {
+        const ox = (i - 3) * 10;
+        const sway1 = Math.sin(t * 0.05 + i * 0.9) * 12;
+        const sway2 = Math.sin(t * 0.03 + i * 1.3) * 18;
+        const tAlpha4 = (0.3 + Math.sin(t * 0.08 + i) * 0.15) * phaseAlpha4;
+        ctx.strokeStyle = (i % 2 === 0 ? b.color : '#cc66ff') + Math.floor(tAlpha4 * 255).toString(16).padStart(2, '0');
+        ctx.lineWidth = 2.5 - i * 0.15;
+        ctx.beginPath();
+        ctx.moveTo(ox, drawH * 0.25);
+        ctx.quadraticCurveTo(ox + sway1, drawH * 0.45, ox + sway2, drawH * 0.75 + i * 3);
+        ctx.stroke();
+      }
+      // Inner bell pulse
+      const bellPulse4 = Math.sin(t * 0.1) * 0.15 + 0.85;
+      const bellGrad4 = ctx.createRadialGradient(0, -drawH * 0.1, 0, 0, -drawH * 0.1, drawW * 0.3 * bellPulse4);
+      bellGrad4.addColorStop(0, `rgba(255, 255, 255, ${0.13 * phaseAlpha4})`);
+      bellGrad4.addColorStop(0.5, `rgba(68, 255, 238, ${0.09 * phaseAlpha4})`);
+      bellGrad4.addColorStop(1, 'rgba(68, 255, 238, 0)');
+      ctx.fillStyle = bellGrad4;
+      ctx.beginPath();
+      ctx.arc(0, -drawH * 0.1, drawW * 0.3 * bellPulse4, 0, Math.PI * 2);
+      ctx.fill();
+      // Phase-in flash
+      if (b.phaseState === 'appearing' && b.phaseTimer < 10) {
+        const flashAlpha = (10 - b.phaseTimer) / 10 * 0.4;
+        const flashGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 50);
+        flashGrad.addColorStop(0, `rgba(255, 255, 255, ${flashAlpha})`);
+        flashGrad.addColorStop(1, 'rgba(68, 255, 238, 0)');
+        ctx.fillStyle = flashGrad;
+        ctx.beginPath(); ctx.arc(0, 0, 50, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1.0;
+      break;
+    }
+    case 5: { // Scarab: charge glow + telegraph + craters + wing fold
+      // Draw craters (in world space, not boss-relative)
+      ctx.save();
+      ctx.translate(-b.x, -b.y); // Undo the boss-relative transform
+      for (const cr of b.craters) {
+        const crFrac = cr.timer / cr.maxTimer;
+        const crPulse = 0.3 + Math.sin(t * 0.1) * 0.15;
+        // Crater ring
+        ctx.strokeStyle = `rgba(255, 136, 0, ${crFrac * crPulse})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(cr.x, cr.y, 20 + (1 - crFrac) * 5, 0, Math.PI * 2); ctx.stroke();
+        // Inner glow
+        ctx.globalCompositeOperation = 'lighter';
+        const crGrad = ctx.createRadialGradient(cr.x, cr.y, 0, cr.x, cr.y, 18);
+        crGrad.addColorStop(0, `rgba(255, 170, 68, ${crFrac * crPulse * 0.4})`);
+        crGrad.addColorStop(1, 'rgba(255, 136, 0, 0)');
+        ctx.fillStyle = crGrad;
+        ctx.beginPath(); ctx.arc(cr.x, cr.y, 18, 0, Math.PI * 2); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      ctx.restore(); // Back to boss-relative
+      // Telegraph glow — orange warning before charge
+      if (b.aiState === 'TELEGRAPH') {
+        ctx.globalCompositeOperation = 'lighter';
+        const telPulse = Math.sin(b.aiTimer * 0.3) * 0.3 + 0.5;
+        const telGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 40);
+        telGrad.addColorStop(0, `rgba(255, 170, 68, ${telPulse * 0.6})`);
+        telGrad.addColorStop(0.5, `rgba(255, 100, 0, ${telPulse * 0.3})`);
+        telGrad.addColorStop(1, 'rgba(255, 80, 0, 0)');
+        ctx.fillStyle = telGrad;
+        ctx.beginPath(); ctx.arc(0, 0, 40, 0, Math.PI * 2); ctx.fill();
+        // Aim indicator — line toward player
+        const aimAngle = b.chargeHeading || 0;
+        ctx.strokeStyle = `rgba(255, 200, 100, ${telPulse * 0.5})`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(aimAngle) * 60, Math.sin(aimAngle) * 60);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      // Charge: intense motion flare
+      if (b.charging) {
+        ctx.globalCompositeOperation = 'lighter';
+        const flareW5 = drawW * 0.7;
+        const cGrad5 = ctx.createRadialGradient(0, 0, 0, 0, 0, flareW5);
+        cGrad5.addColorStop(0, '#ffaa4488');
+        cGrad5.addColorStop(0.3, '#ff880044');
+        cGrad5.addColorStop(1, '#ff880000');
+        ctx.fillStyle = cGrad5;
+        ctx.beginPath(); ctx.arc(0, 0, flareW5, 0, Math.PI * 2); ctx.fill();
+        // Trailing sparks behind charge direction
+        const cDir = Math.atan2(b.chargeVy, b.chargeVx);
+        for (let s = 0; s < 5; s++) {
+          const sx = Math.cos(cDir + Math.PI) * (15 + s * 10) + rand(-5, 5);
+          const sy = Math.sin(cDir + Math.PI) * (15 + s * 10) + rand(-5, 5);
+          ctx.fillStyle = `rgba(255, 200, 68, ${0.5 - s * 0.08})`;
+          ctx.beginPath(); ctx.arc(sx, sy, 3 - s * 0.4, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      // Impact: flash
+      if (b.aiState === 'IMPACT' && b.aiTimer < 10) {
+        ctx.globalCompositeOperation = 'lighter';
+        const impAlpha = (10 - b.aiTimer) / 10;
+        const impGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 50);
+        impGrad.addColorStop(0, `rgba(255, 220, 100, ${impAlpha * 0.6})`);
+        impGrad.addColorStop(1, 'rgba(255, 136, 0, 0)');
+        ctx.fillStyle = impGrad;
+        ctx.beginPath(); ctx.arc(0, 0, 50, 0, Math.PI * 2); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      // Wing shimmer — spread or folded
+      const ws5 = b.wingsSpread ? 1.0 : 0.5;
+      const wingShimmer5 = Math.sin(t * 0.06) * 0.3 + 0.2;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = b.color + Math.floor(wingShimmer5 * 40).toString(16).padStart(2, '0');
+      ctx.beginPath();
+      ctx.arc(-drawW * 0.3 * ws5, 0, 12 * ws5, 0, Math.PI * 2);
+      ctx.arc(drawW * 0.3 * ws5, 0, 12 * ws5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      break;
+    }
+    case 6: { // Moldorm-style segmented body chain — programmatic scales
+      const bodySprite = img['serpentBody'];
+      const tailSprite = img['serpentTail'];
+      const lastIdx = b.segments.length - 1;
+      // Draw connecting tissue between segments (behind everything)
+      ctx.globalCompositeOperation = 'source-over';
+      for (let i = 0; i <= lastIdx; i++) {
+        const seg = b.segments[i];
+        const sx = seg.x - b.x, sy = seg.y - b.y;
+        const px = (i === 0) ? 0 : (b.segments[i - 1].x - b.x);
+        const py = (i === 0) ? 0 : (b.segments[i - 1].y - b.y);
+        const prevR = (i === 0) ? b.renderW * 0.4 : b.segments[i - 1].r;
+        const connW = Math.min(prevR, seg.r) * 1.8;
+        const connAlpha = 0.6 - i * 0.04;
+        if (connAlpha > 0) {
+          // Thick body-colored connector
+          ctx.strokeStyle = `rgba(60, 45, 30, ${connAlpha})`;
+          ctx.lineWidth = connW;
+          ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(sx, sy); ctx.stroke();
+          // Darker spine line
+          ctx.strokeStyle = `rgba(35, 55, 30, ${connAlpha * 0.5})`;
+          ctx.lineWidth = connW * 0.3;
+          ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(sx, sy); ctx.stroke();
+        }
+      }
+      // Draw segments tail-to-head so head overlaps body
+      for (let i = lastIdx; i >= 0; i--) {
+        const seg = b.segments[i];
+        const sx = seg.x - b.x;
+        const sy = seg.y - b.y;
+        const r = seg.r;
+        const isTail = (i === lastIdx);
+        const sprite = isTail ? tailSprite : bodySprite;
+        ctx.save();
+        ctx.translate(sx, sy);
+        if (seg.heading !== undefined) ctx.rotate(seg.heading);
+        if (sprite) {
+          const aspect = sprite.width / sprite.height;
+          // Scale based on radius — height is cross-section, width follows aspect
+          const segH = r * 3.5;
+          const segW = segH * aspect;
+          ctx.drawImage(sprite, -segW / 2, -segH / 2, segW, segH);
+        } else {
+          // Fallback circle if sprite not loaded
+          ctx.fillStyle = b.color;
+          ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+        }
+        // Tail tip energy glow
+        if (isTail) {
+          ctx.globalCompositeOperation = 'lighter';
+          const tailPulse = 0.5 + Math.sin(t * 0.12) * 0.5;
+          const tGrad = ctx.createRadialGradient(r * 0.5, 0, 0, 0, 0, r * 2.0);
+          tGrad.addColorStop(0, `rgba(100, 200, 255, ${tailPulse * 0.3})`);
+          tGrad.addColorStop(1, 'rgba(34, 180, 255, 0)');
+          ctx.fillStyle = tGrad;
+          ctx.beginPath(); ctx.arc(r * 0.5, 0, r * 2.0, 0, Math.PI * 2); ctx.fill();
+          ctx.globalCompositeOperation = 'source-over';
+        }
+        ctx.restore();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      break;
+    }
+    case 7: { // Sentinel: shield orbs with HP + vulnerability glow + destroyed shield ghosts
+      const orbDist = 55;
+      const sa7 = b.shieldsAlive;
+      // Vulnerability window: core glows bright as signal to attack
+      if (b.vulnerabilityActive) {
+        ctx.globalCompositeOperation = 'lighter';
+        const vPulse = 0.6 + Math.sin(t * 0.25) * 0.3;
+        const vGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 45);
+        vGrad.addColorStop(0, `rgba(255, 255, 200, ${vPulse * 0.5})`);
+        vGrad.addColorStop(0.5, `rgba(68, 136, 255, ${vPulse * 0.3})`);
+        vGrad.addColorStop(1, 'rgba(68, 136, 255, 0)');
+        ctx.fillStyle = vGrad;
+        ctx.beginPath(); ctx.arc(0, 0, 45, 0, Math.PI * 2); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      // 0-shields exposed: core crackles with energy
+      if (sa7 === 0) {
+        ctx.globalCompositeOperation = 'lighter';
+        const ePulse = 0.4 + Math.sin(t * 0.15) * 0.2;
+        const eGrad = ctx.createRadialGradient(0, 0, 5, 0, 0, 35);
+        eGrad.addColorStop(0, `rgba(255, 136, 68, ${ePulse})`);
+        eGrad.addColorStop(1, 'rgba(255, 68, 68, 0)');
+        ctx.fillStyle = eGrad;
+        ctx.beginPath(); ctx.arc(0, 0, 35, 0, Math.PI * 2); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      // Draw shield orbs
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < b.orbCount; i++) {
+        const oa = b.orbAngle + (i / b.orbCount) * Math.PI * 2;
+        const ox = Math.cos(oa) * orbDist;
+        const oy = Math.sin(oa) * orbDist;
+        const shield = b.shields[i];
+        if (shield.alive) {
+          // Beam connection from core to alive shield
+          const beamAlpha = 0.3 + Math.sin(t * 0.1 + i * 1.5) * 0.15;
+          ctx.strokeStyle = b.color + Math.floor(beamAlpha * 255).toString(16).padStart(2, '0');
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(ox, oy); ctx.stroke();
+          // Shield arc — 45-degree protective barrier
+          const arcR = orbDist + 8;
+          const arcSpan = Math.PI / 4; // 45 degrees
+          ctx.strokeStyle = `rgba(100, 180, 255, ${0.5 + Math.sin(t * 0.08 + i) * 0.2})`;
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(0, 0, arcR, oa - arcSpan / 2, oa + arcSpan / 2);
+          ctx.stroke();
+          // Orb glow — brightness proportional to HP
+          const hpFrac = shield.hp / shield.maxHp;
+          const orbR = 10 + hpFrac * 4;
+          const oGrad = ctx.createRadialGradient(ox, oy, 0, ox, oy, orbR);
+          oGrad.addColorStop(0, '#ffffff');
+          oGrad.addColorStop(0.3, hpFrac > 0.5 ? b.color : '#ff8844');
+          oGrad.addColorStop(1, hpFrac > 0.5 ? b.color + '00' : '#ff884400');
+          ctx.fillStyle = oGrad;
+          ctx.beginPath(); ctx.arc(ox, oy, orbR, 0, Math.PI * 2); ctx.fill();
+          // Shield HP pip — small bar below orb
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.fillStyle = '#333';
+          ctx.fillRect(ox - 8, oy + orbR + 2, 16, 3);
+          ctx.fillStyle = hpFrac > 0.5 ? '#44aaff' : hpFrac > 0.25 ? '#ffaa44' : '#ff4444';
+          ctx.fillRect(ox - 8, oy + orbR + 2, 16 * hpFrac, 3);
+          ctx.globalCompositeOperation = 'lighter';
+        } else {
+          // Destroyed shield — faint ghost orbiting, no arc
+          const ghostAlpha = 0.08 + Math.sin(t * 0.05 + i * 2) * 0.04;
+          ctx.strokeStyle = `rgba(100, 150, 255, ${ghostAlpha})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(ox, oy); ctx.stroke();
+          ctx.fillStyle = `rgba(100, 150, 255, ${ghostAlpha * 2})`;
+          ctx.beginPath(); ctx.arc(ox, oy, 6, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      // Core energy pulse
+      const corePulse7 = Math.sin(t * 0.08) * 5 + 20;
+      const coreGrad7 = ctx.createRadialGradient(0, 0, 0, 0, 0, corePulse7);
+      coreGrad7.addColorStop(0, '#ffffff33');
+      coreGrad7.addColorStop(0.5, b.color + '22');
+      coreGrad7.addColorStop(1, '#00000000');
+      ctx.fillStyle = coreGrad7;
+      ctx.beginPath(); ctx.arc(0, 0, corePulse7, 0, Math.PI * 2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      break;
+    }
+    case 8: { // Hydra: neck chains + glowing heads + regen + exposed state
+      const hColors = ['#ff4444', '#4488ff', '#cc44ff'];
+      const heads = b.heads;
+      // Exposed state: body glows intensely
+      if (b.exposedActive) {
+        ctx.globalCompositeOperation = 'lighter';
+        const pulse = 0.5 + Math.sin(t * 0.2) * 0.3;
+        const eGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 60);
+        eGrad.addColorStop(0, `rgba(255, 100, 255, ${pulse})`);
+        eGrad.addColorStop(0.5, `rgba(200, 68, 255, ${pulse * 0.3})`);
+        eGrad.addColorStop(1, 'rgba(200, 68, 255, 0)');
+        ctx.fillStyle = eGrad;
+        ctx.beginPath(); ctx.arc(0, 0, 60, 0, Math.PI * 2); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      for (let h = 0; h < 3; h++) {
+        const hp = b.headPositions[h];
+        const hx = hp.x - b.x;
+        const hy = hp.y - b.y;
+        const head = heads[h];
+        const isAlive = head.alive;
+        const isRegen = !isAlive && head.regenTimer > 0;
+        // Neck chain (6 circles from body to head)
+        ctx.globalCompositeOperation = 'lighter';
+        const neckSegments = isAlive ? 6 : (isRegen ? Math.ceil(6 * (1 - head.regenTimer / 480)) : 2);
+        for (let n = 1; n <= neckSegments; n++) {
+          const nt = n / 7;
+          const nx = hx * nt;
+          const ny = hy * nt;
+          const nWobble = Math.sin(t * 0.06 + h * 2 + n * 0.5) * (isAlive ? 3 : 5);
+          const nAlpha = isAlive ? 0x44 : 0x22;
+          ctx.fillStyle = hColors[h] + nAlpha.toString(16).padStart(2, '0');
+          ctx.beginPath();
+          ctx.arc(nx + nWobble, ny, isAlive ? 5 : 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (isAlive) {
+          // Living head glow — brightness based on HP
+          const hpPct = head.hp / head.maxHp;
+          const glowSize = 18 + (head.regenCount * 3); // bigger after regen
+          const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, glowSize);
+          hGrad.addColorStop(0, '#ffffffaa');
+          hGrad.addColorStop(0.3, hColors[h] + '88');
+          hGrad.addColorStop(1, hColors[h] + '00');
+          ctx.fillStyle = hGrad;
+          ctx.beginPath(); ctx.arc(hx, hy, glowSize, 0, Math.PI * 2); ctx.fill();
+          // Eyes
+          const eyeSpread = 4;
+          ctx.fillStyle = head.regenCount > 0 ? '#ff88ffcc' : '#ffffffcc';
+          ctx.beginPath();
+          ctx.arc(hx - eyeSpread, hy - 2, 2, 0, Math.PI * 2);
+          ctx.arc(hx + eyeSpread, hy - 2, 2, 0, Math.PI * 2);
+          ctx.fill();
+          // Head HP bar (small, above head)
+          ctx.globalCompositeOperation = 'source-over';
+          const barW = 20, barH = 3;
+          const barX = hx - barW / 2, barY = hy - glowSize - 4;
+          ctx.fillStyle = 'rgba(0,0,0,0.5)';
+          ctx.fillRect(barX, barY, barW, barH);
+          ctx.fillStyle = hColors[h];
+          ctx.fillRect(barX, barY, barW * hpPct, barH);
+          ctx.globalCompositeOperation = 'lighter';
+        } else if (isRegen) {
+          // Regenerating stump — sparking, growing
+          const regenPct = 1 - head.regenTimer / 480;
+          const sparkAlpha = 0.3 + Math.sin(t * 0.15 + h) * 0.2;
+          const stumpR = 6 + regenPct * 12;
+          const sGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, stumpR);
+          sGrad.addColorStop(0, `rgba(255, 150, 255, ${sparkAlpha})`);
+          sGrad.addColorStop(1, hColors[h] + '00');
+          ctx.fillStyle = sGrad;
+          ctx.beginPath(); ctx.arc(hx, hy, stumpR, 0, Math.PI * 2); ctx.fill();
+          // Spark particles at stump
+          if (Math.random() < 0.3) {
+            const sx = hx + (Math.random() - 0.5) * stumpR;
+            const sy = hy + (Math.random() - 0.5) * stumpR;
+            ctx.fillStyle = '#ff88ff88';
+            ctx.beginPath(); ctx.arc(sx, sy, 1.5, 0, Math.PI * 2); ctx.fill();
+          }
+        } else {
+          // Dead stump (no regen yet) — dark, sparking
+          ctx.fillStyle = hColors[h] + '22';
+          ctx.beginPath(); ctx.arc(hx, hy, 6, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      break;
+    }
+  }
+}
+
+// Returns array of {x, y, r} circles defining the miniboss hittable area (world coordinates)
+function getMinibossHitCircles(b) {
+  switch (b.type) {
+    case 4: // Jellyfish: bell dome — invulnerable when phased out
+      if (b.phaseState === 'phased' || b.phaseState === 'fading') return []; // Can't be hit while phased
+      return [{ x: b.x, y: b.y - 10, r: 35 }, { x: b.x, y: b.y + 25, r: 20 }];
+    case 5: // Scarab: body + wings — smaller hitbox when charging (armored)
+      if (b.charging) {
+        return [{ x: b.x, y: b.y, r: 22, part: 'body', armored: true }]; // Folded wings = compact + armored
+      }
+      return [{ x: b.x, y: b.y, r: 28, part: 'body' }, { x: b.x - 22, y: b.y, r: 16, part: 'wing' }, { x: b.x + 22, y: b.y, r: 16, part: 'wing' }];
+    case 6: // Moldorm serpent: head + all body segments
+      const circles = [{ x: b.x, y: b.y, r: 30 }];
+      for (const seg of b.segments) circles.push({ x: seg.x, y: seg.y, r: seg.r });
+      return circles;
+    case 7: { // Sentinel: core + alive shield orbs (tagged)
+      const sc = [{ x: b.x, y: b.y, r: 30, part: 'core' }];
+      for (let i = 0; i < b.orbCount; i++) {
+        if (!b.shields[i].alive) continue;
+        const oa = b.orbAngle + (i / b.orbCount) * Math.PI * 2;
+        const orbR = 55;
+        sc.push({ x: b.x + Math.cos(oa) * orbR, y: b.y + Math.sin(oa) * orbR, r: 12, part: 'shield', shieldIdx: i });
+      }
+      return sc;
+    }
+    case 8: { // Hydra: heads when alive, body when exposed/headless
+      const hc = [];
+      let anyHead = false;
+      for (let h = 0; h < 3; h++) {
+        if (b.heads[h].alive) {
+          hc.push({ x: b.headPositions[h].x, y: b.headPositions[h].y, r: 20, part: 'head', headIdx: h });
+          anyHead = true;
+        }
+      }
+      if (!anyHead) {
+        // No heads alive — body is targetable (exposed or waiting for regen)
+        hc.push({ x: b.x, y: b.y, r: 35, part: 'body' });
+      }
+      return hc;
+    }
+    default: return [{ x: b.x, y: b.y, r: b.w / 2 }];
+  }
+}
+
 function drawBoss(b) {
   ctx.save();
   ctx.translate(b.x, b.y);
+
+  // Jellyfish phase-shift alpha — affects entire boss rendering
+  if (b.type === 4) {
+    let pa = 1.0;
+    if (b.phaseState === 'fading') pa = 1.0 - b.phaseTimer / 30;
+    else if (b.phaseState === 'phased') pa = 0.15 + Math.sin(globalTime * 0.1) * 0.05;
+    else if (b.phaseState === 'appearing') pa = b.phaseTimer / 30;
+    ctx.globalAlpha = pa;
+  }
 
   const isFlash = b.flash > 0;
   if (isFlash) b.flash--;
 
   const sprite = img[b.spriteKey];
-  const drawW = b.w * 2.2;
-  const drawH = b.h * 2;
+  const drawW = b.isMiniboss ? (b.renderW || b.w * 3.2) : b.w * 2.2;
+  const drawH = b.isMiniboss ? (b.renderH || b.h * 3.2) : b.h * 2;
   const pulse = Math.sin(globalTime * 0.1) * 3;
 
   // Boss aura glow
@@ -1901,18 +3961,51 @@ function drawBoss(b) {
   ctx.fillRect(-auraR, -auraR, auraR * 2, auraR * 2);
   ctx.globalCompositeOperation = 'source-over';
 
+  // Draw miniboss-specific visual extras (body segments, tentacles, etc.)
+  if (b.isMiniboss) drawMinibossExtras(b, drawW, drawH);
+
   if (sprite) {
-    // Draw boss sprite, oscillating slightly
     const wobble = Math.sin(globalTime * 0.08) * 0.05;
-    ctx.rotate(wobble);
-    if (isFlash) {
+    // Serpent: rotate sprite to face heading direction (sprite art faces up, heading 0 = right)
+    if (b.type === 6 && b.heading !== undefined) {
+      ctx.rotate(b.heading + Math.PI / 2);
+    } else {
+      ctx.rotate(wobble);
+    }
+    if (b.isMiniboss) {
+      // Sprite is luminance-keyed (dark bg = transparent). Draw normally, then additive glow pass.
       ctx.drawImage(sprite, -drawW / 2, -drawH / 2, drawW, drawH);
-      ctx.globalCompositeOperation = 'source-atop';
-      ctx.fillStyle = 'rgba(255,255,255,0.6)';
-      ctx.fillRect(-drawW / 2, -drawH / 2, drawW, drawH);
+      // Subtle additive glow pass for neon brightness boost
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.3;
+      ctx.drawImage(sprite, -drawW / 2, -drawH / 2, drawW, drawH);
+      ctx.globalAlpha = 1;
+      // Hit flash via offscreen canvas
+      if (isFlash) {
+        if (!b._fadeCanvas) {
+          b._fadeCanvas = document.createElement('canvas');
+          b._fadeCtx = b._fadeCanvas.getContext('2d');
+        }
+        const fc = b._fadeCanvas, fctx = b._fadeCtx;
+        const fw = Math.ceil(drawW) + 2, fh = Math.ceil(drawH) + 2;
+        if (fc.width !== fw || fc.height !== fh) { fc.width = fw; fc.height = fh; }
+        fctx.clearRect(0, 0, fw, fh);
+        fctx.drawImage(sprite, 1, 1, drawW, drawH);
+        fctx.globalCompositeOperation = 'source-atop';
+        fctx.fillStyle = 'rgba(255,255,255,0.7)';
+        fctx.fillRect(0, 0, fw, fh);
+        fctx.globalCompositeOperation = 'source-over';
+        ctx.drawImage(fc, -drawW / 2 - 1, -drawH / 2 - 1);
+      }
       ctx.globalCompositeOperation = 'source-over';
     } else {
       ctx.drawImage(sprite, -drawW / 2, -drawH / 2, drawW, drawH);
+      if (isFlash) {
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fillRect(-drawW / 2, -drawH / 2, drawW, drawH);
+        ctx.globalCompositeOperation = 'source-over';
+      }
     }
   } else {
     // Fallback: programmatic boss
@@ -1926,27 +4019,65 @@ function drawBoss(b) {
 
   ctx.restore();
 
-  // Boss HP bar at top of screen
-  const barW = W - 80, barX = 40, barY = 20;
-  ctx.fillStyle = '#333';
-  ctx.fillRect(barX, barY, barW, 8);
+  // HP bar
   const hpFrac = b.hp / b.maxHp;
-  const hpGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
-  if (hpFrac > 0.5) {
-    hpGrad.addColorStop(0, '#44ff44'); hpGrad.addColorStop(1, '#88ffaa');
-  } else if (hpFrac > 0.25) {
-    hpGrad.addColorStop(0, '#ffaa00'); hpGrad.addColorStop(1, '#ffcc44');
+  if (b.isMiniboss) {
+    if (b.type === 6) {
+      // Serpent: fixed HP bar at top (roams freely, so tracking bar would be jittery)
+      const mBarW = W - 120, mBarH = 5;
+      const mBarX = 60, mBarY = 18;
+      ctx.fillStyle = '#33333388';
+      ctx.fillRect(mBarX, mBarY, mBarW, mBarH);
+      const mGrad = ctx.createLinearGradient(mBarX, 0, mBarX + mBarW, 0);
+      mGrad.addColorStop(0, b.color); mGrad.addColorStop(1, '#ffffff88');
+      ctx.fillStyle = mGrad;
+      ctx.fillRect(mBarX, mBarY, mBarW * hpFrac, mBarH);
+      ctx.strokeStyle = '#ffffff33';
+      ctx.strokeRect(mBarX, mBarY, mBarW, mBarH);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '10px "Courier New"';
+      ctx.textAlign = 'center';
+      ctx.fillText(b.name, W / 2, mBarY - 3);
+    } else {
+    // Miniboss: HP bar floating above the sprite image
+    const rH = b.renderH || b.h * 3;
+    const mBarW = Math.max(b.w * 1.8, 80), mBarH = 5;
+    const mBarX = b.x - mBarW / 2, mBarY = b.y - rH / 2 - 15;
+    ctx.fillStyle = '#33333388';
+    ctx.fillRect(mBarX, mBarY, mBarW, mBarH);
+    const mGrad = ctx.createLinearGradient(mBarX, 0, mBarX + mBarW, 0);
+    mGrad.addColorStop(0, b.color); mGrad.addColorStop(1, '#ffffff88');
+    ctx.fillStyle = mGrad;
+    ctx.fillRect(mBarX, mBarY, mBarW * hpFrac, mBarH);
+    ctx.strokeStyle = '#ffffff33';
+    ctx.strokeRect(mBarX, mBarY, mBarW, mBarH);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '10px "Courier New"';
+    ctx.textAlign = 'center';
+    ctx.fillText(b.name, b.x, mBarY - 3);
+    }
   } else {
-    hpGrad.addColorStop(0, '#ff4444'); hpGrad.addColorStop(1, '#ff8844');
+    // Full boss: wide HP bar at top of screen
+    const barW = W - 80, barX = 40, barY = 20;
+    ctx.fillStyle = '#333';
+    ctx.fillRect(barX, barY, barW, 8);
+    const hpGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+    if (hpFrac > 0.5) {
+      hpGrad.addColorStop(0, '#44ff44'); hpGrad.addColorStop(1, '#88ffaa');
+    } else if (hpFrac > 0.25) {
+      hpGrad.addColorStop(0, '#ffaa00'); hpGrad.addColorStop(1, '#ffcc44');
+    } else {
+      hpGrad.addColorStop(0, '#ff4444'); hpGrad.addColorStop(1, '#ff8844');
+    }
+    ctx.fillStyle = hpGrad;
+    ctx.fillRect(barX, barY, barW * hpFrac, 8);
+    ctx.strokeStyle = '#ffffff44';
+    ctx.strokeRect(barX, barY, barW, 8);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '12px "Courier New"';
+    ctx.textAlign = 'center';
+    ctx.fillText(b.name || 'BOSS', W / 2, barY - 4);
   }
-  ctx.fillStyle = hpGrad;
-  ctx.fillRect(barX, barY, barW * hpFrac, 8);
-  ctx.strokeStyle = '#ffffff44';
-  ctx.strokeRect(barX, barY, barW, 8);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '12px "Courier New"';
-  ctx.textAlign = 'center';
-  ctx.fillText(b.name || 'BOSS', W / 2, barY - 4);
 }
 
 // ---- DRAW ENEMY BULLET ----
@@ -2216,6 +4347,664 @@ function drawFireSprites() {
 }
 
 // ---- DRAW SHIP SELECT SCREEN ----
+// ---- MODE SELECT SCREEN ----
+function drawModeSelectScreen() {
+  ctx.save();
+  ctx.fillStyle = '#0a0a15';
+  ctx.fillRect(0, 0, W, H);
+
+  // Title
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 32px "Courier New"';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('SELECT MODE', W / 2, 80);
+
+  selectAnim += 0.03;
+  const panelW = 135, panelH = 280;
+  const gap = 12;
+  const modes = [
+    { name: 'ENDLESS', desc: 'Classic arcade.\nPick a ship.\nSurvive infinite\nwaves.', color: '#7b68ee', icon: '\u221E' },
+    { name: 'CAMPAIGN', desc: 'Structured levels.\nBeat bosses.\nEarn equipment.\nBuild your ship.', color: '#ff6ec7', icon: '\u2694' },
+    { name: 'BOSS FIGHT', desc: 'Pick any boss.\nJump straight\ninto battle.\nGreat for practice.', color: '#ff4444', icon: '\u2620' },
+  ];
+
+  const totalW = modes.length * panelW + (modes.length - 1) * gap;
+  const startX = (W - totalW) / 2;
+
+  for (let i = 0; i < modes.length; i++) {
+    const px = startX + i * (panelW + gap);
+    const py = 140;
+    const m = modes[i];
+    const sel = i === modeSelectIndex;
+    const glow = sel ? 0.6 + Math.sin(selectAnim * 3) * 0.3 : 0.15;
+
+    // Panel bg
+    ctx.fillStyle = `rgba(20,20,40,0.9)`;
+    ctx.fillRect(px, py, panelW, panelH);
+
+    // Border
+    ctx.strokeStyle = sel ? m.color : '#333';
+    ctx.lineWidth = sel ? 3 : 1;
+    ctx.strokeRect(px, py, panelW, panelH);
+
+    // Glow
+    if (sel) {
+      ctx.shadowColor = m.color;
+      ctx.shadowBlur = 15;
+      ctx.strokeRect(px, py, panelW, panelH);
+      ctx.shadowBlur = 0;
+    }
+
+    // Icon
+    ctx.font = 'bold 40px "Courier New"';
+    ctx.fillStyle = m.color;
+    ctx.globalAlpha = glow + 0.4;
+    ctx.fillText(m.icon, px + panelW / 2, py + 65);
+    ctx.globalAlpha = 1;
+
+    // Name
+    ctx.font = 'bold 14px "Courier New"';
+    ctx.fillStyle = sel ? '#ffffff' : '#888';
+    ctx.fillText(m.name, px + panelW / 2, py + 100);
+
+    // Subtitle
+    ctx.font = '9px "Courier New"';
+    ctx.fillStyle = sel ? '#aaa' : '#666';
+    ctx.fillText(i === 0 ? 'BALANCED' : i === 1 ? 'STORY' : 'PRACTICE', px + panelW / 2, py + 116);
+
+    // Description
+    ctx.font = '10px "Courier New"';
+    ctx.fillStyle = '#aaa';
+    const lines = m.desc.split('\n');
+    for (let l = 0; l < lines.length; l++) {
+      ctx.fillText(lines[l], px + panelW / 2, py + 145 + l * 17);
+    }
+
+    // Campaign progress
+    if (i === 1) {
+      const cleared = Object.values(saveData.levels).filter(l => l.cleared).length;
+      const total = CAMPAIGN_CHAPTERS[1].levels.length;
+      ctx.font = '11px "Courier New"';
+      ctx.fillStyle = '#ff6ec7';
+      ctx.fillText(`Chapter 1: ${cleared}/${total}`, px + panelW / 2, py + panelH - 20);
+    }
+  }
+
+  // Bottom prompt
+  ctx.font = '14px "Courier New"';
+  ctx.fillStyle = '#00ffff';
+  ctx.globalAlpha = 0.6 + Math.sin(selectAnim * 4) * 0.4;
+  if (isMobile) {
+    ctx.fillText('[ TAP TO SELECT ]', W / 2, H - 60);
+  } else {
+    ctx.fillText('[ LEFT/RIGHT + ENTER ]', W / 2, H - 60);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+// ---- BOSS FIGHT SELECT SCREEN ----
+function drawBossSelectScreen() {
+  ctx.save();
+  ctx.fillStyle = '#0a0a15';
+  ctx.fillRect(0, 0, W, H);
+
+  selectAnim += 0.03;
+
+  // Title
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 28px "Courier New"';
+  ctx.fillStyle = '#ff4444';
+  ctx.fillText('BOSS FIGHT', W / 2, 50);
+  ctx.font = '11px "Courier New"';
+  ctx.fillStyle = '#888';
+  ctx.fillText('Pick a boss to battle', W / 2, 72);
+
+  // Boss list
+  const rowH = 72;
+  const startY = 95;
+  const listW = W - 60;
+  const listX = 30;
+
+  for (let i = 0; i < BOSS_FIGHT_LIST.length; i++) {
+    const b = BOSS_FIGHT_LIST[i];
+    const ry = startY + i * rowH;
+    const sel = i === bossSelectIndex;
+
+    // Row background
+    ctx.fillStyle = sel ? 'rgba(40,20,20,0.95)' : 'rgba(15,15,30,0.8)';
+    ctx.fillRect(listX, ry, listW, rowH - 6);
+
+    // Border
+    ctx.strokeStyle = sel ? b.color : '#222';
+    ctx.lineWidth = sel ? 2 : 1;
+    ctx.strokeRect(listX, ry, listW, rowH - 6);
+
+    // Selection glow
+    if (sel) {
+      ctx.shadowColor = b.color;
+      ctx.shadowBlur = 10;
+      ctx.strokeRect(listX, ry, listW, rowH - 6);
+      ctx.shadowBlur = 0;
+    }
+
+    // Type badge (B for boss, M for miniboss)
+    const badgeX = listX + 22;
+    const badgeY = ry + (rowH - 6) / 2;
+    ctx.fillStyle = b.icon === 'B' ? '#ff4444' : '#ffaa00';
+    ctx.font = 'bold 12px "Courier New"';
+    ctx.textAlign = 'center';
+    ctx.fillText(b.icon === 'B' ? 'BOSS' : 'MINI', badgeX, badgeY - 8);
+    // Color dot
+    ctx.fillStyle = b.color;
+    ctx.beginPath(); ctx.arc(badgeX, badgeY + 8, 6, 0, Math.PI * 2); ctx.fill();
+
+    // Boss name
+    ctx.textAlign = 'left';
+    ctx.font = sel ? 'bold 14px "Courier New"' : '13px "Courier New"';
+    ctx.fillStyle = sel ? '#ffffff' : '#aaa';
+    ctx.fillText(b.name, listX + 55, ry + 26);
+
+    // Description + HP
+    ctx.font = '10px "Courier New"';
+    ctx.fillStyle = '#888';
+    ctx.fillText(b.desc, listX + 55, ry + 44);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#666';
+    ctx.fillText(`HP: ${b.hp}`, listX + listW - 12, ry + 26);
+
+    // HP bar
+    const hpBarW = 60, hpBarH = 4;
+    const hpBarX = listX + listW - 12 - hpBarW;
+    const hpBarY = ry + 38;
+    ctx.fillStyle = '#222';
+    ctx.fillRect(hpBarX, hpBarY, hpBarW, hpBarH);
+    ctx.fillStyle = b.color;
+    ctx.fillRect(hpBarX, hpBarY, hpBarW * Math.min(b.hp / 600, 1), hpBarH);
+  }
+
+  // Bottom prompt
+  ctx.textAlign = 'center';
+  ctx.font = '13px "Courier New"';
+  ctx.fillStyle = '#00ffff';
+  ctx.globalAlpha = 0.6 + Math.sin(selectAnim * 4) * 0.4;
+  if (isMobile) {
+    ctx.fillText('[ TAP TO SELECT ]', W / 2, H - 40);
+  } else {
+    ctx.fillText('[ UP/DOWN + ENTER ]', W / 2, H - 50);
+    ctx.fillStyle = '#888';
+    ctx.font = '10px "Courier New"';
+    ctx.fillText('ESC to go back', W / 2, H - 30);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+// ---- LEVEL SELECT SCREEN ----
+function drawLevelSelectScreen() {
+  ctx.save();
+  ctx.fillStyle = '#0a0a15';
+  ctx.fillRect(0, 0, W, H);
+
+  const chapter = CAMPAIGN_CHAPTERS[1];
+
+  // Chapter title
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 24px "Courier New"';
+  ctx.fillStyle = '#ff6ec7';
+  ctx.fillText('CHAPTER 1', W / 2, 50);
+  ctx.font = '14px "Courier New"';
+  ctx.fillStyle = '#888';
+  ctx.fillText(chapter.name, W / 2, 72);
+
+  selectAnim += 0.03;
+
+  // Level list
+  const startY = 100;
+  for (let i = 0; i < chapter.levels.length; i++) {
+    const level = chapter.levels[i];
+    const ly = startY + i * 75;
+    const unlocked = isLevelUnlocked(level.id);
+    const sel = i === levelSelectIndex;
+    const progress = saveData.levels[level.id];
+    const cleared = progress && progress.cleared;
+
+    // Row background
+    ctx.fillStyle = sel ? 'rgba(255,110,199,0.12)' : 'rgba(20,20,40,0.6)';
+    ctx.fillRect(50, ly, W - 100, 65);
+
+    // Border
+    ctx.strokeStyle = sel ? '#ff6ec7' : (unlocked ? '#444' : '#222');
+    ctx.lineWidth = sel ? 2 : 1;
+    ctx.strokeRect(50, ly, W - 100, 65);
+
+    ctx.textAlign = 'left';
+
+    if (!unlocked) {
+      // Locked
+      ctx.font = 'bold 16px "Courier New"';
+      ctx.fillStyle = '#333';
+      ctx.fillText('\u{1F512} ' + level.id, 70, ly + 28);
+      ctx.font = '12px "Courier New"';
+      ctx.fillText('LOCKED', 70, ly + 48);
+    } else {
+      // Level ID + name
+      ctx.font = 'bold 16px "Courier New"';
+      ctx.fillStyle = sel ? '#ffffff' : '#ccc';
+      ctx.fillText(level.id + '  ' + level.name, 70, ly + 28);
+
+      // Info line
+      ctx.font = '11px "Courier New"';
+      ctx.fillStyle = '#888';
+      const waveCount = level.waves.length;
+      const hasBoss = level.boss || level.miniboss;
+      ctx.fillText(`${waveCount} waves` + (hasBoss ? ' + BOSS' : ''), 70, ly + 48);
+
+      // Stars
+      if (cleared) {
+        const stars = progress.stars || 0;
+        ctx.textAlign = 'right';
+        ctx.font = '16px "Courier New"';
+        for (let s = 0; s < 3; s++) {
+          ctx.fillStyle = s < stars ? '#ffaa00' : '#333';
+          ctx.fillText('\u2605', W - 60 + s * 18, ly + 35);
+        }
+      }
+
+      // Best score
+      if (progress && progress.bestScore) {
+        ctx.textAlign = 'right';
+        ctx.font = '10px "Courier New"';
+        ctx.fillStyle = '#666';
+        ctx.fillText('BEST: ' + progress.bestScore, W - 60, ly + 55);
+      }
+    }
+  }
+
+  // Bottom buttons
+  ctx.textAlign = 'center';
+
+  // Ship View button
+  ctx.fillStyle = 'rgba(20,20,40,0.8)';
+  ctx.fillRect(40, 630, 190, 45);
+  ctx.strokeStyle = '#4488ff';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(40, 630, 190, 45);
+  ctx.font = 'bold 14px "Courier New"';
+  ctx.fillStyle = '#4488ff';
+  ctx.fillText('SHIP & EQUIP [E]', 135, 657);
+
+  // Back button
+  ctx.fillStyle = 'rgba(20,20,40,0.8)';
+  ctx.fillRect(250, 630, 190, 45);
+  ctx.strokeStyle = '#888';
+  ctx.strokeRect(250, 630, 190, 45);
+  ctx.fillStyle = '#888';
+  ctx.fillText('BACK [ESC]', 345, 657);
+
+  // Enter prompt
+  ctx.font = '12px "Courier New"';
+  ctx.fillStyle = '#00ffff';
+  ctx.globalAlpha = 0.6 + Math.sin(selectAnim * 4) * 0.4;
+  ctx.fillText('[ ENTER TO PLAY ]', W / 2, 620);
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+// ---- SHIP VIEW / EQUIPMENT SCREEN ----
+const EQUIP_SLOT_LAYOUT = [
+  { key: 'weapon1',    label: 'WEAPON 1',   x: 60,  y: 100 },
+  { key: 'weapon2',    label: 'WEAPON 2',   x: 60,  y: 170 },
+  { key: 'armor',      label: 'ARMOR',      x: 60,  y: 260 },
+  { key: 'wings',      label: 'WINGS',      x: 60,  y: 330 },
+  { key: 'engine',     label: 'ENGINE',     x: 60,  y: 400 },
+  { key: 'accessory1', label: 'ACC. 1',     x: 60,  y: 490 },
+  { key: 'accessory2', label: 'ACC. 2',     x: 60,  y: 560 },
+];
+
+function getSlotType(slotKey) {
+  if (slotKey.startsWith('weapon')) return 'weapon';
+  if (slotKey.startsWith('accessory')) return 'accessory';
+  return slotKey;
+}
+
+function handleShipViewTap(cx, cy) {
+  // Check slot taps (left side)
+  for (const slot of EQUIP_SLOT_LAYOUT) {
+    if (cx > slot.x - 10 && cx < slot.x + 160 && cy > slot.y - 5 && cy < slot.y + 55) {
+      if (equipSelectSlot === slot.key) {
+        // Unequip
+        saveData.equipped[slot.key] = null;
+        writeSave();
+        equipSelectSlot = null;
+      } else {
+        equipSelectSlot = slot.key;
+        equipSelectIndex = 0;
+      }
+      return;
+    }
+  }
+
+  // Check inventory taps (right side)
+  if (equipSelectSlot && cx > 240) {
+    const slotType = getSlotType(equipSelectSlot);
+    const compatible = saveData.inventory.filter(id => {
+      const def = EQUIPMENT_DEFS[id];
+      return def && def.slot === slotType;
+    });
+    const gridCols = 3;
+    const itemW = 70, itemH = 55;
+    const gridX = 250, gridY = 100;
+    for (let i = 0; i < compatible.length; i++) {
+      const col = i % gridCols;
+      const row = Math.floor(i / gridCols);
+      const ix = gridX + col * (itemW + 5);
+      const iy = gridY + row * (itemH + 5);
+      if (cx > ix && cx < ix + itemW && cy > iy && cy < iy + itemH) {
+        saveData.equipped[equipSelectSlot] = compatible[i];
+        writeSave();
+        equipSelectSlot = null;
+        return;
+      }
+    }
+  }
+
+  // Back button
+  if (cy > 650 && cy < 700) {
+    gameState = 'levelselect';
+    equipSelectSlot = null;
+  }
+}
+
+function drawShipViewScreen() {
+  ctx.save();
+  ctx.fillStyle = '#0a0a15';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 22px "Courier New"';
+  ctx.fillStyle = '#4488ff';
+  ctx.fillText('SHIP & EQUIPMENT', W / 2, 40);
+
+  // Ship name
+  ctx.font = '14px "Courier New"';
+  ctx.fillStyle = '#888';
+  ctx.fillText(CAMPAIGN_SHIP.name + ' — ' + CAMPAIGN_SHIP.subtitle, W / 2, 65);
+
+  // Equipment slots (left side)
+  ctx.textAlign = 'left';
+  for (const slot of EQUIP_SLOT_LAYOUT) {
+    const equipped = saveData.equipped[slot.key];
+    const def = equipped ? EQUIPMENT_DEFS[equipped] : null;
+    const sel = equipSelectSlot === slot.key;
+
+    // Slot background
+    ctx.fillStyle = sel ? 'rgba(68,136,255,0.15)' : 'rgba(20,20,40,0.7)';
+    ctx.fillRect(slot.x - 10, slot.y - 5, 170, 55);
+    ctx.strokeStyle = sel ? '#4488ff' : '#333';
+    ctx.lineWidth = sel ? 2 : 1;
+    ctx.strokeRect(slot.x - 10, slot.y - 5, 170, 55);
+
+    // Slot label
+    ctx.font = '9px "Courier New"';
+    ctx.fillStyle = '#666';
+    ctx.fillText(slot.label, slot.x, slot.y + 10);
+
+    if (def) {
+      // Equipped item
+      const rarityColor = EQUIP_RARITY[def.rarity].color;
+      ctx.font = 'bold 12px "Courier New"';
+      ctx.fillStyle = rarityColor;
+      ctx.fillText(def.name, slot.x, slot.y + 28);
+      ctx.font = '9px "Courier New"';
+      ctx.fillStyle = '#888';
+      ctx.fillText(def.desc, slot.x, slot.y + 42);
+    } else {
+      ctx.font = '12px "Courier New"';
+      ctx.fillStyle = '#444';
+      ctx.fillText('[ EMPTY ]', slot.x, slot.y + 30);
+    }
+  }
+
+  // Inventory panel (right side) — only shows when a slot is selected
+  if (equipSelectSlot) {
+    const slotType = getSlotType(equipSelectSlot);
+    const compatible = saveData.inventory.filter(id => {
+      const def = EQUIPMENT_DEFS[id];
+      return def && def.slot === slotType;
+    });
+
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 12px "Courier New"';
+    ctx.fillStyle = '#4488ff';
+    ctx.fillText('INVENTORY', 355, 88);
+
+    if (compatible.length === 0) {
+      ctx.font = '11px "Courier New"';
+      ctx.fillStyle = '#555';
+      ctx.fillText('No items', 355, 150);
+    } else {
+      const gridCols = 3;
+      const itemW = 70, itemH = 55;
+      const gridX = 250, gridY = 100;
+      for (let i = 0; i < compatible.length; i++) {
+        const def = EQUIPMENT_DEFS[compatible[i]];
+        if (!def) continue;
+        const col = i % gridCols;
+        const row = Math.floor(i / gridCols);
+        const ix = gridX + col * (itemW + 5);
+        const iy = gridY + row * (itemH + 5);
+        const rarityColor = EQUIP_RARITY[def.rarity].color;
+
+        ctx.fillStyle = 'rgba(20,20,40,0.8)';
+        ctx.fillRect(ix, iy, itemW, itemH);
+        ctx.strokeStyle = rarityColor;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(ix, iy, itemW, itemH);
+
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 16px "Courier New"';
+        ctx.fillStyle = rarityColor;
+        ctx.fillText(def.icon, ix + itemW / 2, iy + 22);
+        ctx.font = '8px "Courier New"';
+        ctx.fillStyle = '#ccc';
+        ctx.fillText(def.name.split(' ')[0], ix + itemW / 2, iy + 38);
+        ctx.fillStyle = '#666';
+        ctx.fillText(EQUIP_RARITY[def.rarity].name, ix + itemW / 2, iy + 50);
+      }
+    }
+  } else {
+    // Show computed stats
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 12px "Courier New"';
+    ctx.fillStyle = '#4488ff';
+    ctx.fillText('SHIP STATS', 355, 120);
+
+    // Calculate stats with equipment
+    const tempMods = {
+      damageMult: 1, shootDelayMult: 1, bulletSpeedMult: 1,
+      speedMult: 1, maxHpBonus: 0, bombBonus: 0,
+      extraStreams: 0, sideShots: 0, pierceCount: 0,
+      hitboxShrink: 0, regenInterval: 0, reflectChance: 0,
+      dropRateMult: 1, killHealChance: 0,
+    };
+    const baseCfg = CAMPAIGN_SHIP;
+    for (const slotId of Object.values(saveData.equipped)) {
+      if (!slotId) continue;
+      const def = EQUIPMENT_DEFS[slotId];
+      if (def && def.effect) def.effect(tempMods);
+    }
+
+    const stats = [
+      { label: 'HP', val: baseCfg.hp + (tempMods.maxHpBonus || 0), color: '#ff4444' },
+      { label: 'SPEED', val: Math.round(baseCfg.speed * (tempMods.speedMult || 1) * 10) / 10, color: '#44ff88' },
+      { label: 'FIRE RATE', val: Math.round(baseCfg.shootDelay * (tempMods.shootDelayMult || 1) * 10) / 10, color: '#ffaa00' },
+      { label: 'DAMAGE', val: Math.round((tempMods.damageMult || 1) * 100) + '%', color: '#ff6ec7' },
+      { label: 'BOMBS', val: baseCfg.bombs + (tempMods.bombBonus || 0), color: '#44ff44' },
+    ];
+
+    ctx.textAlign = 'left';
+    for (let i = 0; i < stats.length; i++) {
+      const s = stats[i];
+      const sy = 150 + i * 35;
+      ctx.font = '11px "Courier New"';
+      ctx.fillStyle = '#888';
+      ctx.fillText(s.label, 270, sy);
+      ctx.font = 'bold 14px "Courier New"';
+      ctx.fillStyle = s.color;
+      ctx.fillText(String(s.val), 380, sy);
+    }
+  }
+
+  // Back button
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(20,20,40,0.8)';
+  ctx.fillRect(W / 2 - 80, 655, 160, 35);
+  ctx.strokeStyle = '#888';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(W / 2 - 80, 655, 160, 35);
+  ctx.font = 'bold 13px "Courier New"';
+  ctx.fillStyle = '#888';
+  ctx.fillText('BACK [ESC]', W / 2, 677);
+
+  ctx.restore();
+}
+
+// ---- LEVEL DONE SCREEN ----
+let lootDrop = null; // { itemId, x, y, collected }
+
+function drawLevelDoneScreen() {
+  levelDoneTimer++;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.9)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+
+  // Staggered reveal animation
+  const t = levelDoneTimer;
+
+  // Title (appears immediately)
+  if (t > 10) {
+    const a = Math.min(1, (t - 10) / 20);
+    ctx.globalAlpha = a;
+    ctx.font = 'bold 32px "Courier New"';
+    ctx.fillStyle = '#44ff88';
+    ctx.fillText('LEVEL CLEAR', W / 2, 80);
+    ctx.font = '16px "Courier New"';
+    ctx.fillStyle = '#ff6ec7';
+    ctx.fillText(campaignLevel.id + ' \u2014 ' + campaignLevel.name, W / 2, 115);
+  }
+
+  // Stats (appear after short delay)
+  if (t > 30) {
+    const a = Math.min(1, (t - 30) / 20);
+    ctx.globalAlpha = a;
+    ctx.font = '14px "Courier New"';
+    ctx.fillStyle = '#ccc';
+    ctx.fillText('Score: ' + levelScore, W / 2, 175);
+    ctx.fillText('Deaths: ' + levelDeaths, W / 2, 205);
+    ctx.fillText('Damage Taken: ' + levelDamageTaken, W / 2, 235);
+  }
+
+  // Stars (appear with pop)
+  if (t > 50) {
+    const stars = levelDeaths === 0 && levelDamageTaken === 0 ? 3 :
+                  levelDeaths === 0 ? 2 : 1;
+    ctx.font = '36px "Courier New"';
+    for (let i = 0; i < 3; i++) {
+      const starDelay = 50 + i * 12;
+      if (t > starDelay) {
+        const sa = Math.min(1, (t - starDelay) / 15);
+        const scale = 1 + Math.max(0, 1 - (t - starDelay) / 10) * 0.3;
+        ctx.globalAlpha = sa;
+        ctx.save();
+        ctx.translate(W / 2 - 50 + i * 50, 300);
+        ctx.scale(scale, scale);
+        ctx.fillStyle = i < stars ? '#ffaa00' : '#333';
+        ctx.fillText('\u2605', 0, 0);
+        ctx.restore();
+      }
+    }
+  }
+
+  // Loot drop (appears after stars)
+  if (t > 90 && lootDrop) {
+    const def = EQUIPMENT_DEFS[lootDrop.itemId];
+    if (def) {
+      const a = Math.min(1, (t - 90) / 25);
+      ctx.globalAlpha = a;
+      const rarityColor = EQUIP_RARITY[def.rarity].color;
+      ctx.font = 'bold 14px "Courier New"';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('EQUIPMENT DROP', W / 2, 370);
+
+      ctx.fillStyle = 'rgba(20,20,40,0.9)';
+      ctx.fillRect(W / 2 - 120, 385, 240, 70);
+      ctx.strokeStyle = rarityColor;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(W / 2 - 120, 385, 240, 70);
+      ctx.shadowColor = rarityColor;
+      ctx.shadowBlur = 8;
+      ctx.strokeRect(W / 2 - 120, 385, 240, 70);
+      ctx.shadowBlur = 0;
+
+      ctx.font = '20px "Courier New"';
+      ctx.fillStyle = rarityColor;
+      ctx.fillText(def.icon, W / 2 - 80, 428);
+      ctx.font = 'bold 13px "Courier New"';
+      ctx.fillStyle = rarityColor;
+      ctx.fillText(def.name, W / 2 + 10, 415);
+      ctx.font = '10px "Courier New"';
+      ctx.fillStyle = '#aaa';
+      ctx.fillText(def.desc, W / 2 + 10, 435);
+      ctx.font = '9px "Courier New"';
+      ctx.fillStyle = EQUIP_RARITY[def.rarity].color;
+      ctx.fillText(EQUIP_RARITY[def.rarity].name, W / 2 + 10, 450);
+    }
+  }
+
+  // Buttons (appear last, after everything settles)
+  const btnReady = lootDrop ? 120 : 80;
+  if (t > btnReady) {
+    const a = Math.min(1, (t - btnReady) / 20);
+    ctx.globalAlpha = a;
+
+    const btnY = 500;
+    const btnH = 50;
+    const btnW = W / 2 - 50;
+    const nextX = 40;
+    const selX = W / 2 + 10;
+    const hoverNext = levelDoneHover === 'next';
+    const hoverSel = levelDoneHover === 'select';
+
+    // Next Level button
+    ctx.fillStyle = hoverNext ? 'rgba(68,255,136,0.15)' : 'rgba(20,20,40,0.8)';
+    ctx.fillRect(nextX, btnY, btnW, btnH);
+    ctx.strokeStyle = hoverNext ? '#88ffbb' : '#44ff88';
+    ctx.lineWidth = hoverNext ? 2 : 1;
+    ctx.strokeRect(nextX, btnY, btnW, btnH);
+    ctx.font = 'bold 14px "Courier New"';
+    ctx.fillStyle = hoverNext ? '#bbffdd' : '#44ff88';
+    ctx.fillText('NEXT LEVEL', nextX + btnW / 2, btnY + btnH / 2 + 5);
+
+    // Level Select button
+    ctx.fillStyle = hoverSel ? 'rgba(136,136,255,0.15)' : 'rgba(20,20,40,0.8)';
+    ctx.fillRect(selX, btnY, btnW, btnH);
+    ctx.strokeStyle = hoverSel ? '#aaaaff' : '#6666aa';
+    ctx.lineWidth = hoverSel ? 2 : 1;
+    ctx.strokeRect(selX, btnY, btnW, btnH);
+    ctx.fillStyle = hoverSel ? '#ccccff' : '#8888cc';
+    ctx.fillText('LEVEL SELECT', selX + btnW / 2, btnY + btnH / 2 + 5);
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
 function drawSelectScreen() {
   selectAnim++;
   ctx.save();
@@ -2361,7 +5150,7 @@ function drawPowerBar(x, y, w) {
   // Visual power progression: 4 segments showing current level & what's ahead
   const segW = (w - 6) / 4; // 4 segments with 2px gaps
   const segH = 8;
-  const shipColor = SHIP_CONFIGS[selectedShip].color;
+  const shipColor = (gameMode === 'campaign' ? CAMPAIGN_SHIP : SHIP_CONFIGS[selectedShip]).color;
   const labels = ['I', 'II', 'III', 'IV'];
 
   for (let i = 0; i < 4; i++) {
@@ -2406,18 +5195,22 @@ function drawPowerBar(x, y, w) {
 
 function drawHUD() {
   ctx.fillStyle = '#ffffff'; ctx.font = '14px "Courier New"'; ctx.textAlign = 'left';
+  const hudCfg = gameMode === 'campaign' ? CAMPAIGN_SHIP : SHIP_CONFIGS[selectedShip];
+  const waveText = gameMode === 'campaign' && campaignLevel
+    ? `${campaignLevel.id} W${wave}/${campaignTotalWaves}`
+    : `WAVE ${wave}`;
 
   if (isMobile) {
     // ---- MOBILE HUD LAYOUT ----
     // Top bar: ship name + wave + status
-    ctx.fillStyle = SHIP_CONFIGS[selectedShip].color;
+    ctx.fillStyle = hudCfg.color;
     ctx.font = 'bold 12px "Courier New"';
     ctx.textAlign = 'center';
-    ctx.fillText(SHIP_CONFIGS[selectedShip].name, W / 2, 15);
+    ctx.fillText(hudCfg.name, W / 2, 15);
 
     ctx.fillStyle = '#7b68ee'; ctx.textAlign = 'right';
     ctx.font = '12px "Courier New"';
-    ctx.fillText(`WAVE ${wave}`, W - 10, 15);
+    ctx.fillText(waveText, W - 10, 15);
 
     ctx.fillStyle = '#555'; ctx.textAlign = 'left';
     ctx.font = '10px "Courier New"';
@@ -2454,12 +5247,12 @@ function drawHUD() {
     ctx.fillStyle = '#555';
     ctx.fillText(`BULLETS: ${enemyBullets.length}`, 10, 15);
 
-    ctx.fillStyle = SHIP_CONFIGS[selectedShip].color;
+    ctx.fillStyle = hudCfg.color;
     ctx.textAlign = 'center';
-    ctx.fillText(SHIP_CONFIGS[selectedShip].name, W / 2, 15);
+    ctx.fillText(hudCfg.name, W / 2, 15);
 
     ctx.fillStyle = '#7b68ee'; ctx.textAlign = 'right';
-    ctx.fillText(`WAVE ${wave}`, W - 10, 15);
+    ctx.fillText(waveText, W - 10, 15);
 
     // Bottom left: score / hi / graze
     ctx.textAlign = 'left';
@@ -2537,12 +5330,24 @@ function update() {
         shakeTimer = 20; shakeIntensity = 8;
         powerupAnnouncement = { name: 'SECOND WIND', desc: 'Revived!', rarity: RARITY.LEGENDARY, timer: 120 };
       } else {
-        gameState = 'gameover';
-        document.getElementById('game-over').style.display = 'flex';
-        if (isMobile) touchControls.classList.remove('active');
-        document.getElementById('final-score').textContent = `SCORE: ${score.toString().padStart(8, '0')}`;
-        document.getElementById('final-wave').textContent = `REACHED WAVE ${wave}`;
-        if (score > hiScore) { hiScore = score; localStorage.setItem('stellarHiScore', hiScore); }
+        if (gameMode === 'campaign') {
+          // Campaign: return to level select
+          if (isMobile) { touchControls.classList.remove('active'); autoFireIndicator.style.display = 'none'; }
+          showLevelSelect();
+        } else {
+          gameState = 'gameover';
+          document.getElementById('game-over').style.display = 'flex';
+          if (isMobile) touchControls.classList.remove('active');
+          if (gameMode === 'bossfight') {
+            const entry = BOSS_FIGHT_LIST.find(b => b.type === bossFightType);
+            document.getElementById('final-score').textContent = `DEFEATED BY`;
+            document.getElementById('final-wave').textContent = entry ? entry.name : 'BOSS';
+          } else {
+            document.getElementById('final-score').textContent = `SCORE: ${score.toString().padStart(8, '0')}`;
+            document.getElementById('final-wave').textContent = `REACHED WAVE ${wave}`;
+          }
+          if (score > hiScore) { hiScore = score; localStorage.setItem('stellarHiScore', hiScore); }
+        }
       }
     }
     return;
@@ -2705,8 +5510,112 @@ function update() {
     }
     for (const boss of bosses) {
       if (!boss.alive) continue;
-      if (Math.abs(b.x - boss.x) < boss.w / 2 + 4 && Math.abs(b.y - boss.y) < boss.h / 2 + 4) {
-        boss.hp -= b.damage; boss.flash = 2;
+      // Sentinel shield blocking — check if bullet is blocked by a shield arc before core hit
+      if (boss.type === 7 && boss.shieldsAlive > 0) {
+        const distFromCore = Math.hypot(b.x - boss.x, b.y - boss.y);
+        // Only check blocking if bullet is near the shield orbit ring (±18px of orbit radius 55)
+        if (distFromCore > 37 && distFromCore < 73) {
+          const bulletAngle = Math.atan2(b.y - boss.y, b.x - boss.x);
+          let blocked = false;
+          for (let si = 0; si < boss.orbCount; si++) {
+            if (!boss.shields[si].alive) continue;
+            const shieldAngle = boss.orbAngle + (si / boss.orbCount) * Math.PI * 2;
+            let angleDiff = bulletAngle - shieldAngle;
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            if (Math.abs(angleDiff) < Math.PI / 8) { // 22.5 degrees each side = 45 degree arc
+              // Bullet hits shield!
+              boss.shields[si].hp -= b.damage;
+              boss.shields[si].flash = 3;
+              if (boss.shields[si].hp <= 0) {
+                boss.shields[si].alive = false;
+                boss.shields[si].hp = 0;
+                const sAngle = shieldAngle;
+                const sx = boss.x + Math.cos(sAngle) * 55;
+                const sy = boss.y + Math.sin(sAngle) * 55;
+                spawnExplosion(sx, sy, '#4488ff', false);
+                shakeTimer = 6; shakeIntensity = 3;
+                // Counterattack: ring burst from boss
+                fireCircle(boss.x, boss.y, 8, 2.5, '#4488ff', Math.random() * Math.PI * 2);
+                // Retreat dash to opposite side
+                boss.retreatTimer = 30;
+                boss.targetX = boss.x < W / 2 ? W - 80 - Math.random() * 60 : 80 + Math.random() * 60;
+              }
+              spawnParticles(b.x, b.y, '#4488ff', 2, 2, 8, 2);
+              b.y = -999; // Destroy bullet
+              blocked = true;
+              break;
+            }
+          }
+          if (blocked) continue;
+        }
+      }
+      // Multi-circle hitbox for minibosses, AABB for regular bosses
+      let bossHit = false;
+      let hitCircle = null;
+      if (boss.isMiniboss) {
+        const circles = getMinibossHitCircles(boss);
+        for (const c of circles) {
+          if (Math.hypot(b.x - c.x, b.y - c.y) < c.r + b.size) { bossHit = true; hitCircle = c; break; }
+        }
+      } else {
+        bossHit = Math.abs(b.x - boss.x) < boss.w / 2 + 4 && Math.abs(b.y - boss.y) < boss.h / 2 + 4;
+      }
+      if (bossHit) {
+        // Sentinel: route damage to shield orbs or core
+        if (boss.type === 7 && hitCircle && hitCircle.part === 'shield') {
+          const shield = boss.shields[hitCircle.shieldIdx];
+          shield.hp -= b.damage;
+          if (shield.hp <= 0) {
+            shield.alive = false;
+            shield.hp = 0;
+            spawnExplosion(hitCircle.x, hitCircle.y, '#4488ff', false);
+            shakeTimer = 6; shakeIntensity = 3;
+            fireCircle(boss.x, boss.y, 8, 2.5, '#4488ff', Math.random() * Math.PI * 2);
+            boss.retreatTimer = 30;
+            boss.targetX = boss.x < W / 2 ? W - 80 - Math.random() * 60 : 80 + Math.random() * 60;
+          }
+          boss.flash = 2;
+        } else if (boss.type === 7 && hitCircle && hitCircle.part === 'core') {
+          // Core hit — 1.5x damage when 0 shields
+          const coreMult = boss.shieldsAlive === 0 ? 1.5 : 1.0;
+          boss.hp -= b.damage * coreMult;
+          boss.flash = 2;
+          if (boss.vulnerabilityActive) boss.vulnerabilityDmgAccum += b.damage;
+        // Hydra: route damage to individual heads or body
+        } else if (boss.type === 8 && hitCircle && hitCircle.part === 'head') {
+          const head = boss.heads[hitCircle.headIdx];
+          head.hp -= b.damage;
+          boss.hp -= b.damage * 0.5; // Head hits also drain main HP
+          if (head.hp <= 0 && head.alive) {
+            // Sever head!
+            head.alive = false;
+            head.hp = 0;
+            head.regenTimer = 480; // 8 seconds to regenerate
+            boss.lastSeverTimes[hitCircle.headIdx] = globalTime;
+            const hp = boss.headPositions[hitCircle.headIdx];
+            spawnExplosion(hp.x, hp.y, hitCircle.headIdx === 0 ? '#ff4444' : hitCircle.headIdx === 1 ? '#4488ff' : '#cc44ff', false);
+            shakeTimer = 8; shakeIntensity = 4;
+            // Rage burst from remaining alive heads
+            for (let oh = 0; oh < 3; oh++) {
+              if (boss.heads[oh].alive) {
+                const ohp = boss.headPositions[oh];
+                fireCircle(ohp.x, ohp.y, 8, 2.5, ['#ff4444','#4488ff','#cc44ff'][oh], Math.random() * Math.PI * 2);
+              }
+            }
+          }
+          boss.flash = 2;
+        } else if (boss.type === 8) {
+          // Body hit (headless) — bonus when exposed
+          const dmgMult = boss.exposedActive ? 3.0 : 1.0;
+          boss.hp -= b.damage * dmgMult; boss.flash = 2;
+        } else if (boss.type === 5) {
+          // Scarab: 50% armor when charging (wings folded)
+          const scarabMult = boss.charging ? 0.5 : 1.0;
+          boss.hp -= b.damage * scarabMult; boss.flash = 2;
+        } else {
+          boss.hp -= b.damage; boss.flash = 2;
+        }
         if (b.pierce && b.pierceRemaining !== undefined) {
           b.pierceRemaining--;
           if (b.pierceRemaining <= 0) b.pierce = false;
@@ -2722,14 +5631,32 @@ function update() {
         if (boss.hp <= 0) {
           boss.alive = false; score += boss.value;
           spawnExplosion(boss.x, boss.y, boss.color, true);
-          spawnExplosion(boss.x - 20, boss.y + 10, '#ffaa00', true);
-          spawnExplosion(boss.x + 20, boss.y - 10, '#ffffff', true);
-          shakeTimer = 30; shakeIntensity = 12;
-          for (let i = 0; i < 8; i++) spawnItem(boss.x + rand(-40, 40), boss.y + rand(-20, 20), 'score');
-          for (let i = 0; i < 3; i++) spawnItem(boss.x + rand(-30, 30), boss.y + rand(-10, 10), 'power');
-          spawnItem(boss.x, boss.y, 'bomb');
-          // Spawn roguelike powerup choices
-          spawnPowerupChoices(boss.x, boss.y);
+          if (boss.isMiniboss) {
+            // Miniboss: smaller explosion, fewer drops
+            shakeTimer = 15; shakeIntensity = 6;
+            for (let i = 0; i < 4; i++) spawnItem(boss.x + rand(-30, 30), boss.y + rand(-15, 15), 'score');
+            spawnItem(boss.x + rand(-20, 20), boss.y, 'power');
+          } else {
+            // Full boss: big explosion
+            spawnExplosion(boss.x - 20, boss.y + 10, '#ffaa00', true);
+            spawnExplosion(boss.x + 20, boss.y - 10, '#ffffff', true);
+            shakeTimer = 30; shakeIntensity = 12;
+            for (let i = 0; i < 8; i++) spawnItem(boss.x + rand(-40, 40), boss.y + rand(-20, 20), 'score');
+            for (let i = 0; i < 3; i++) spawnItem(boss.x + rand(-30, 30), boss.y + rand(-10, 10), 'power');
+            spawnItem(boss.x, boss.y, 'bomb');
+          }
+          // Spawn roguelike powerup choices (skip in boss fight mode)
+          if (gameMode !== 'bossfight') spawnPowerupChoices(boss.x, boss.y);
+          // Campaign loot drop
+          if (gameMode === 'campaign' && campaignLevel) {
+            const lootType = boss.isMiniboss ? 'miniboss' : 'boss';
+            const lootId = rollLoot(lootType, campaignLevel.id);
+            if (lootId) {
+              lootDrop = { itemId: lootId };
+              saveData.inventory.push(lootId);
+              writeSave();
+            }
+          }
         }
       }
     }
@@ -2752,9 +5679,15 @@ function update() {
       }
       for (const boss of bosses) {
         if (!boss.alive) continue;
-        if (Math.hypot(bx - boss.x, by - boss.y) < boss.w / 2 + 8) {
-          boss.hp -= 2; boss.flash = 2;
+        let bladeHit = false;
+        if (boss.isMiniboss) {
+          for (const c of getMinibossHitCircles(boss)) {
+            if (Math.hypot(bx - c.x, by - c.y) < c.r + 8) { bladeHit = true; break; }
+          }
+        } else {
+          bladeHit = Math.hypot(bx - boss.x, by - boss.y) < boss.w / 2 + 8;
         }
+        if (bladeHit) { boss.hp -= 2; boss.flash = 2; }
       }
     }
   }
@@ -2832,6 +5765,7 @@ function update() {
           break;
         }
         p.hp--; p.alive = false; p.deathAnim = 0;
+        levelDamageTaken++; levelDeaths++;
         shakeTimer = 20; shakeIntensity = 10;
         spawnExplosion(p.x, p.y, '#00ffff', true);
         spawnExplosion(p.x, p.y, '#ffffff', true);
@@ -2847,6 +5781,7 @@ function update() {
     if (Math.abs(p.x - e.x) < e.w / 2 + p.hitboxRadius && Math.abs(p.y - e.y) < e.h / 2 + p.hitboxRadius) {
       if (p.invincible <= 0) {
         p.hp--; p.alive = false; p.deathAnim = 0;
+        levelDamageTaken++; levelDeaths++;
         shakeTimer = 20; shakeIntensity = 10;
         spawnExplosion(p.x, p.y, '#00ffff', true);
         e.hp -= 5; if (e.hp <= 0) e.alive = false;
@@ -2884,7 +5819,35 @@ function update() {
   bosses = bosses.filter(b => b.alive);
 
   waveTimer++;
-  if (enemies.length === 0 && bosses.length === 0 && waveTimer > 120) spawnWave();
+  if (enemies.length === 0 && bosses.length === 0 && waveTimer > 120) {
+    if (gameMode === 'bossfight') {
+      // Boss fight mode: spawn boss on first wave, victory after it dies
+      if (wave === 0) {
+        wave = 1; waveTimer = 0;
+        const boss = createBoss(bossFightType);
+        // Use campaign HP values from BOSS_FIGHT_LIST
+        const entry = BOSS_FIGHT_LIST.find(b => b.type === bossFightType);
+        if (entry) { boss.hp = entry.hp; boss.maxHp = entry.hp; }
+        bosses.push(boss);
+      } else {
+        // Boss defeated — victory!
+        gameState = 'gameover';
+        document.getElementById('game-over').style.display = 'flex';
+        if (isMobile) touchControls.classList.remove('active');
+        const entry = BOSS_FIGHT_LIST.find(b => b.type === bossFightType);
+        document.getElementById('final-score').textContent = `VICTORY!`;
+        document.getElementById('final-wave').textContent = `${entry ? entry.name : 'BOSS'} DEFEATED`;
+      }
+    } else if (gameMode === 'campaign') {
+      if (campaignWaveIndex >= campaignTotalWaves) {
+        completeCampaignLevel();
+      } else {
+        spawnCampaignWave();
+      }
+    } else {
+      spawnWave();
+    }
+  }
 }
 
 // ============================================================
@@ -2952,14 +5915,29 @@ function render() {
     }
   }
   if (gameState === 'select') drawSelectScreen();
+  if (gameState === 'modeselect') drawModeSelectScreen();
+  if (gameState === 'bossselect') drawBossSelectScreen();
+  if (gameState === 'levelselect') drawLevelSelectScreen();
+  if (gameState === 'shipview') drawShipViewScreen();
+  if (gameState === 'leveldone') drawLevelDoneScreen();
 
   // Wave announcement
   if (waveTimer < 60 && gameState === 'playing') {
     const alpha = waveTimer < 30 ? waveTimer / 30 : (60 - waveTimer) / 30;
     ctx.globalAlpha = alpha;
     ctx.fillStyle = '#ffffff'; ctx.font = 'bold 28px "Courier New"'; ctx.textAlign = 'center';
-    ctx.fillText(`WAVE ${wave}`, W / 2, H / 3);
-    if (bosses.length > 0) {
+    if (gameMode === 'bossfight') {
+      const entry = BOSS_FIGHT_LIST.find(b => b.type === bossFightType);
+      ctx.fillStyle = entry ? entry.color : '#ff4444';
+      ctx.fillText(entry ? entry.name : 'BOSS FIGHT', W / 2, H / 3);
+      ctx.fillStyle = '#ffffff'; ctx.font = 'bold 16px "Courier New"';
+      ctx.fillText('FIGHT!', W / 2, H / 3 + 35);
+    } else if (gameMode === 'campaign' && campaignLevel) {
+      ctx.fillText(`${campaignLevel.id}  WAVE ${wave}/${campaignTotalWaves}`, W / 2, H / 3);
+    } else {
+      ctx.fillText(`WAVE ${wave}`, W / 2, H / 3);
+    }
+    if (bosses.length > 0 && gameMode !== 'bossfight') {
       ctx.fillStyle = '#ff4444'; ctx.font = 'bold 20px "Courier New"';
       ctx.fillText('WARNING: BOSS APPROACHING', W / 2, H / 3 + 35);
     }
@@ -2999,26 +5977,49 @@ function gameLoop() {
   requestAnimationFrame(gameLoop);
 }
 
+function completeCampaignLevel() {
+  if (!campaignLevel) return;
+  levelScore = score;
+  const stars = levelDeaths === 0 && levelDamageTaken === 0 ? 3 :
+                levelDeaths === 0 ? 2 : 1;
+
+  // Save progress
+  const prev = saveData.levels[campaignLevel.id] || {};
+  saveData.levels[campaignLevel.id] = {
+    cleared: true,
+    bestScore: Math.max(prev.bestScore || 0, levelScore),
+    stars: Math.max(prev.stars || 0, stars),
+  };
+  writeSave();
+
+  // Clean up gameplay state
+  powerupSelectActive = false;
+  powerupChoices = [];
+  enemyBullets = [];
+
+  // Hide mobile controls
+  if (isMobile) {
+    touchControls.classList.remove('active');
+    autoFireIndicator.style.display = 'none';
+  }
+
+  levelDoneTimer = 0;
+  gameState = 'leveldone';
+}
+
 function startGame() {
   document.getElementById('title-screen').style.display = 'none';
   document.getElementById('game-over').style.display = 'none';
   gameState = 'playing';
-
-  // Reset touch state to prevent stale dragId from blocking movement
-  touch.dragId = null;
-  touch.active = false;
-  touch.dx = 0;
-  touch.dy = 0;
-  touch.focus = false;
-  touch.bomb = false;
-  touch.btnIds.clear();
+  resetTouchState();
 
   if (isMobile) {
     touchControls.classList.add('active');
     autoFireIndicator.style.display = 'block';
   }
 
-  const cfg = SHIP_CONFIGS[selectedShip];
+  // Pick ship config: campaign uses CAMPAIGN_SHIP, endless uses selected ship
+  const cfg = gameMode === 'campaign' ? CAMPAIGN_SHIP : SHIP_CONFIGS[selectedShip];
   score = 0; wave = 0; waveTimer = 100; graze = 0; globalTime = 0;
   player.x = W / 2; player.y = H - 80;
   player.hp = cfg.hp; player.maxHp = cfg.maxHp; player.alive = true;
@@ -3039,16 +6040,27 @@ function startGame() {
   powerupSelectActive = false;
   powerupCollectedThisBoss = false;
   powerupAnnouncement = null;
+
+  // Apply equipment modifiers for campaign mode
   resolveModifiers();
+
+  // Apply equipment bonuses to starting stats
+  if (gameMode === 'campaign') {
+    player.maxHp += resolvedMods.maxHpBonus;
+    player.hp = player.maxHp;
+    player.bombs += (resolvedMods.bombBonus || 0);
+  }
 
   playerBullets = []; enemies = []; enemyBullets = [];
   particles = []; items = []; bosses = []; fireSprites = [];
+  lootDrop = null;
 }
 
 // ---- INIT: Load assets then show title ----
 async function init() {
   initBackground();
   await loadAllAssets();
+  preprocessMinibossSprites();
   assetsLoaded = true;
   document.getElementById('loading-screen').style.display = 'none';
   document.getElementById('title-screen').style.display = 'flex';
