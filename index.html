@@ -1247,6 +1247,7 @@ const BOSS_FIGHT_LIST = [
   { type: 8, name: 'VOID HYDRA', color: '#cc44ff', hp: 200, desc: 'Miniboss 1-5', icon: 'M' },
   { type: 2, name: 'VOID EMPRESS', color: '#aa44ff', hp: 400, desc: 'Boss — Wave 10', icon: 'B' },
   { type: 3, name: 'STELLAR DRAGON', color: '#ffaa00', hp: 600, desc: 'Boss — Wave 15', icon: 'B' },
+  { type: 9, name: 'ASTRAL WARDEN', color: '#9966ff', hp: 350, desc: 'Keeper of Orbiting Fates', icon: 'B' },
 ];
 let campaignLevel = null;  // current level def when in campaign
 let campaignWaveIndex = 0; // which wave in the level's sequence
@@ -2360,6 +2361,21 @@ function createBoss(bossType) {
       headPositions: [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }],
       neckSegCount: 10, maxNeckLen: 360,
     };
+    case 9: return { ...base, hp: 350, maxHp: 350, name: 'ASTRAL WARDEN', color: '#9966ff', w: 55, h: 55, renderW: 140, renderH: 210, spriteKey: 'miniboss7', isMiniboss: true, value: 5000, targetY: 130, orbAngle: 0, orbCount: 4, orbSpeed: 0.025,
+      shields: [
+        { hp: 35, maxHp: 35, alive: true, type: 'comet', name: 'COMET', color: '#44aaff', attackTimer: 0, angle: 0, dist: 60, targetAngle: 0, targetDist: 60, independent: false, indX: 0, indY: 0, indVx: 0, indVy: 0 },
+        { hp: 35, maxHp: 35, alive: true, type: 'nova', name: 'NOVA', color: '#ff4488', attackTimer: 20, angle: Math.PI / 2, dist: 60, targetAngle: Math.PI / 2, targetDist: 60, independent: false, indX: 0, indY: 0, indVx: 0, indVy: 0 },
+        { hp: 35, maxHp: 35, alive: true, type: 'supernova', name: 'SUPERNOVA', color: '#ffaa22', attackTimer: 40, angle: Math.PI, dist: 60, targetAngle: Math.PI, targetDist: 60, independent: false, indX: 0, indY: 0, indVx: 0, indVy: 0 },
+        { hp: 35, maxHp: 35, alive: true, type: 'eclipse', name: 'ECLIPSE', color: '#44ffaa', attackTimer: 60, angle: Math.PI * 1.5, dist: 60, targetAngle: Math.PI * 1.5, targetDist: 60, independent: false, indX: 0, indY: 0, indVx: 0, indVy: 0 },
+      ],
+      shieldsAlive: 4,
+      wardenPhase: 'STABLE_ORBIT', formationTimer: 0, formationTransition: 0, prevPhase: 0,
+      vulnerabilityTimer: 0, vulnerabilityActive: false, vulnTelegraph: 0, vulnerabilityDmgAccum: 0,
+      intermissionActive: false, intermissionTimer: 0, intermissionTriggered: false,
+      singularityActive: false, singularityAngle: 0,
+      gravityWells: [], beams: [],
+      retreatTimer: 0,
+    };
     default: return { ...base, hp: 200 + bossType * 100, maxHp: 200 + bossType * 100, name: 'BOSS', color: '#ff4444', spriteKey: 'boss1' };
   }
 }
@@ -2498,6 +2514,7 @@ function updateBossAI(b) {
     case 6: bossPattern6(b); break;
     case 7: bossPattern7(b); break;
     case 8: bossPattern8(b); break;
+    case 9: bossPattern9(b); break;
     default: bossPattern1(b); break;
   }
 }
@@ -3102,6 +3119,229 @@ function updateMinibossMovement(b) {
 
       break;
     }
+    case 9: { // Astral Warden: orbital states + intermission + singularity
+      b.shieldsAlive = b.shields.filter(s => s.alive).length;
+      const sa9 = b.shieldsAlive;
+
+      // --- Detect phase transitions and update wardenPhase ---
+      if (b.phase !== b.prevPhase) {
+        b.prevPhase = b.phase;
+        b.formationTransition = 60;
+        // Bullet clear + screen shake on phase transition
+        for (const eb of enemyBullets) {
+          if (Math.hypot(eb.x - b.x, eb.y - b.y) < 200) eb.x = -999;
+        }
+        shakeTimer = 12; shakeIntensity = 6;
+        if (b.phase === 0) b.wardenPhase = 'STABLE_ORBIT';
+        else if (b.phase === 1) b.wardenPhase = 'GRAVITATIONAL_SHEAR';
+        else if (b.phase === 2) b.wardenPhase = 'ORBITAL_DECAY';
+      }
+
+      // --- Intermission check (50% HP, once) ---
+      const hpPct9 = b.hp / b.maxHp;
+      if (!b.intermissionTriggered && hpPct9 <= 0.5 && sa9 > 0) {
+        b.intermissionActive = true;
+        b.intermissionTriggered = true;
+        b.intermissionTimer = 600; // 10 seconds
+        // Detach surviving shields
+        for (const s of b.shields) {
+          if (!s.alive) continue;
+          s.independent = true;
+          s.indX = b.x + Math.cos(s.angle) * s.dist;
+          s.indY = b.y + Math.sin(s.angle) * s.dist;
+          // Fly toward random arena position
+          const tgtX = 60 + Math.random() * (W - 120);
+          const tgtY = 80 + Math.random() * (H * 0.6);
+          const a = Math.atan2(tgtY - s.indY, tgtX - s.indX);
+          s.indVx = Math.cos(a) * 1.5;
+          s.indVy = Math.sin(a) * 1.5;
+        }
+        // Bullet clear on intermission start
+        for (const eb of enemyBullets) eb.x = -999;
+        shakeTimer = 20; shakeIntensity = 8;
+      }
+
+      // --- Intermission update ---
+      if (b.intermissionActive) {
+        b.intermissionTimer--;
+        // Update independent shield positions
+        for (const s of b.shields) {
+          if (!s.alive || !s.independent) continue;
+          s.indX += s.indVx;
+          s.indY += s.indVy;
+          // Bounce off arena walls
+          if (s.indX < 30 || s.indX > W - 30) s.indVx *= -1;
+          if (s.indY < 30 || s.indY > H * 0.7) s.indVy *= -1;
+          s.indX = Math.max(30, Math.min(W - 30, s.indX));
+          s.indY = Math.max(30, Math.min(H * 0.7, s.indY));
+          // Gentle drift changes
+          if (globalTime % 120 === 0) {
+            s.indVx += (Math.random() - 0.5) * 0.8;
+            s.indVy += (Math.random() - 0.5) * 0.6;
+            const spd = Math.hypot(s.indVx, s.indVy);
+            if (spd > 2) { s.indVx *= 2 / spd; s.indVy *= 2 / spd; }
+          }
+        }
+        // End intermission when all shields dead or timer expires
+        if (sa9 === 0 || b.intermissionTimer <= 0) {
+          b.intermissionActive = false;
+          // Re-attach any surviving shields
+          for (let i = 0; i < b.orbCount; i++) {
+            const s = b.shields[i];
+            if (!s.alive) continue;
+            s.independent = false;
+            s.angle = (i / b.orbCount) * Math.PI * 2;
+            s.dist = 60;
+            s.targetAngle = s.angle;
+            s.targetDist = 60;
+          }
+          // Bullet clear on intermission end
+          for (const eb of enemyBullets) eb.x = -999;
+          shakeTimer = 15; shakeIntensity = 6;
+        }
+        // Skip normal orbital logic during intermission
+        break;
+      }
+
+      // --- Orbital state machine ---
+      const baseOrbSpeed9 = 0.025 + b.phase * 0.01 + (4 - sa9) * 0.006;
+      b.orbSpeed = baseOrbSpeed9;
+
+      if (!b.vulnerabilityActive && b.vulnTelegraph <= 0) {
+        b.orbAngle += baseOrbSpeed9;
+      }
+
+      // Compute shield targets based on wardenPhase
+      b.formationTimer++;
+      if (b.formationTransition > 0) b.formationTransition--;
+
+      switch (b.wardenPhase) {
+        case 'STABLE_ORBIT':
+          // Even circular orbit
+          for (let i = 0; i < b.orbCount; i++) {
+            if (!b.shields[i].alive) continue;
+            b.shields[i].targetAngle = (i / b.orbCount) * Math.PI * 2;
+            b.shields[i].targetDist = 60;
+          }
+          break;
+        case 'GRAVITATIONAL_SHEAR':
+          // Shields on rotating X-axis (pairs)
+          for (let i = 0; i < b.orbCount; i++) {
+            if (!b.shields[i].alive) continue;
+            const pairOffset = (i % 2 === 0) ? 0 : Math.PI;
+            const axisAngle = (Math.floor(i / 2)) * (Math.PI / 2);
+            b.shields[i].targetAngle = axisAngle + pairOffset;
+            b.shields[i].targetDist = 55;
+          }
+          break;
+        case 'ORBITAL_DECAY':
+          // Chaotic drift — wobbling targets
+          for (let i = 0; i < b.orbCount; i++) {
+            if (!b.shields[i].alive) continue;
+            const wobble = Math.sin(globalTime * 0.03 + i * 2.5) * 0.4 + Math.cos(globalTime * 0.02 + i * 1.7) * 0.3;
+            b.shields[i].targetAngle = (i / b.orbCount) * Math.PI * 2 + wobble;
+            b.shields[i].targetDist = 55 + Math.sin(globalTime * 0.04 + i * 3) * 20;
+          }
+          break;
+      }
+
+      // Lerp shields toward targets
+      for (let i = 0; i < b.orbCount; i++) {
+        const s = b.shields[i];
+        if (!s.alive || s.independent) continue;
+        const lerpRate = b.formationTransition > 0 ? 0.04 : 0.08;
+        let goalAngle = s.targetAngle + b.orbAngle;
+        let da = goalAngle - s.angle;
+        while (da > Math.PI) da -= Math.PI * 2;
+        while (da < -Math.PI) da += Math.PI * 2;
+        s.angle += da * lerpRate;
+        s.dist = lerp(s.dist, s.targetDist, lerpRate);
+      }
+
+      // --- Vulnerability window (Orbital Inversion) ---
+      b.vulnerabilityTimer++;
+      const vulnCd9 = sa9 >= 3 ? 420 : sa9 === 2 ? 360 : 300;
+      if (b.vulnTelegraph > 0) {
+        b.vulnTelegraph--;
+        if (b.vulnTelegraph <= 0) {
+          b.vulnerabilityActive = true;
+          b.vulnerabilityTimer = 0;
+          b.vulnerabilityDmgAccum = 0;
+          for (const s of b.shields) {
+            if (s.alive && !s.independent) s.targetDist = 95;
+          }
+        }
+      }
+      if (!b.vulnerabilityActive && b.vulnTelegraph <= 0 && b.vulnerabilityTimer >= vulnCd9 && sa9 > 0) {
+        b.vulnTelegraph = 30;
+        b.vulnerabilityTimer = 0;
+      }
+      if (b.vulnerabilityActive) {
+        b.vulnerabilityTimer++;
+        const maxDur9 = 90 + (b.vulnerabilityDmgAccum >= 20 ? 60 : 0);
+        if (b.vulnerabilityTimer >= maxDur9) {
+          b.vulnerabilityActive = false;
+          b.vulnerabilityTimer = 0;
+          for (const s of b.shields) {
+            if (s.alive && !s.independent) s.targetDist = 60;
+          }
+        }
+      }
+
+      // --- Update gravity wells ---
+      for (let gi = b.gravityWells.length - 1; gi >= 0; gi--) {
+        const gw = b.gravityWells[gi];
+        gw.timer--;
+        if (gw.timer <= 0) { b.gravityWells.splice(gi, 1); continue; }
+        // Spiral bullet emissions every 100 frames
+        if (gw.timer % 100 === 0) {
+          fireSpiral(gw.x, gw.y, 3, 1.5, gw.color, globalTime * 0.1, 2);
+        }
+      }
+
+      // --- Update singularity beams ---
+      for (let bi = b.beams.length - 1; bi >= 0; bi--) {
+        const beam = b.beams[bi];
+        beam.timer++;
+        beam.angle += beam.rotSpeed; // Continuous rotation
+        beam.x = b.x; beam.y = b.y;
+        if (beam.timer >= beam.maxTimer) b.beams.splice(bi, 1);
+      }
+
+      // --- Singularity mode (0 shields, post-intermission) ---
+      if (sa9 === 0 && !b.intermissionActive && b.intermissionTriggered) {
+        b.singularityActive = true;
+        b.singularityAngle += 0.015;
+        // Spawn dual rotating beams if none active
+        if (b.beams.length === 0 && b.shootTimer % 180 === 0) {
+          b.beams.push({
+            x: b.x, y: b.y, angle: b.singularityAngle,
+            sweepStart: 0, sweepEnd: 0, // not used — continuous rotation
+            rotSpeed: 0.025, timer: 0, maxTimer: 150, width: 14,
+          });
+          b.beams.push({
+            x: b.x, y: b.y, angle: b.singularityAngle + Math.PI,
+            sweepStart: 0, sweepEnd: 0,
+            rotSpeed: -0.02, timer: 0, maxTimer: 150, width: 14,
+          });
+        }
+      }
+
+      // --- Movement ---
+      if (b.retreatTimer > 0) {
+        b.retreatTimer--;
+        b.x = lerp(b.x, b.targetX, 0.08);
+        b.y = lerp(b.y, b.targetY, 0.04);
+      } else {
+        b.moveTimer++;
+        const movePeriod = sa9 <= 1 ? 120 : 200;
+        const moveSpd = sa9 <= 1 ? 0.02 : 0.01;
+        if (b.moveTimer > movePeriod) { b.moveTimer = 0; b.targetX = 80 + Math.random() * (W - 160); }
+        b.x = lerp(b.x, b.targetX, moveSpd);
+      }
+      b.y = lerp(b.y, b.targetY + Math.sin(globalTime * 0.02) * 15, 0.02);
+      break;
+    }
   }
 }
 
@@ -3431,6 +3671,146 @@ function bossPattern8(b) {
   // Body desperation: when 0 heads alive and NOT exposed, body fires rings
   if (b.headsAlive === 0 && !b.exposedActive && b.shootTimer % 40 === 0) {
     fireCircle(b.x, b.y + 50, 10, 2.5, '#cc44ff', b.angle);
+  }
+}
+
+// ASTRAL WARDEN: Celestial shield attacks + core patterns + singularity finale
+function bossPattern9(b) {
+  // No attacks during vulnerability window or telegraph
+  if (b.vulnerabilityActive || b.vulnTelegraph > 0) return;
+  const sa = b.shieldsAlive;
+  const phase = b.phase;
+  const rate = phase === 2 ? 0.65 : phase === 1 ? 0.8 : 1;
+
+  // --- Intermission: independent shields fire their signature attacks ---
+  if (b.intermissionActive) {
+    for (let i = 0; i < b.orbCount; i++) {
+      const s = b.shields[i];
+      if (!s.alive || !s.independent) continue;
+      s.attackTimer++;
+      const ox = s.indX, oy = s.indY;
+      switch (s.type) {
+        case 'comet':
+          if (s.attackTimer % 35 === 0) {
+            const a = angleToward({ x: ox, y: oy }, player);
+            for (let t = 0; t < 3; t++) {
+              const ca = a + (t - 1) * 0.12;
+              enemyBullets.push({ x: ox, y: oy, vx: Math.cos(ca) * (2.2 - t * 0.3), vy: Math.sin(ca) * (2.2 - t * 0.3), size: 4 - t, color: s.color, type: 'round', arcCurve: 0.008 * (Math.random() > 0.5 ? 1 : -1) });
+            }
+          }
+          break;
+        case 'nova':
+          if (s.attackTimer % 60 === 0) {
+            fireCircle(ox, oy, 10, 1.8, s.color, globalTime * 0.05);
+          }
+          break;
+        case 'supernova':
+          if (s.attackTimer % 50 === 0) {
+            const a = angleToward({ x: ox, y: oy }, player);
+            enemyBullets.push({ x: ox, y: oy, vx: Math.cos(a) * 1.6, vy: Math.sin(a) * 1.6, size: 8, color: s.color, type: 'round', artilleryTimer: 45 + Math.floor(Math.random() * 15), artilleryColor: s.color });
+          }
+          break;
+        case 'eclipse':
+          if (s.attackTimer % 55 === 0) {
+            const a = angleToward({ x: ox, y: oy }, player);
+            enemyBullets.push({ x: ox, y: oy, vx: Math.cos(a) * 1.4, vy: Math.sin(a) * 1.4, size: 6, color: s.color, type: 'round', homing: 0.018, homingDuration: 140 });
+          }
+          break;
+      }
+    }
+    // Core fires slow rings during intermission
+    if (b.shootTimer % 80 === 0) {
+      fireCircle(b.x, b.y, 8, 1.5, '#9966ff', b.orbAngle);
+    }
+    return;
+  }
+
+  // --- Per-shield typed attacks (attached mode) ---
+  if (b.formationTransition <= 0) {
+    for (let i = 0; i < b.orbCount; i++) {
+      const s = b.shields[i];
+      if (!s.alive || s.independent) continue;
+      s.attackTimer++;
+      const ox = b.x + Math.cos(s.angle) * s.dist;
+      const oy = b.y + Math.sin(s.angle) * s.dist;
+
+      switch (s.type) {
+        case 'comet': // Blue — arcing aimed trails (3-bullet arc cluster)
+          if (s.attackTimer % Math.floor(45 * rate) === 0) {
+            const a = angleToward({ x: ox, y: oy }, player);
+            for (let t = 0; t < 3; t++) {
+              const ca = a + (t - 1) * 0.1;
+              const spd = 2.4 - t * 0.2;
+              enemyBullets.push({ x: ox, y: oy, vx: Math.cos(ca) * spd, vy: Math.sin(ca) * spd, size: 4 - t, color: s.color, type: 'round', arcCurve: 0.006 * (t === 0 ? 0 : t === 1 ? 1 : -1) });
+            }
+          }
+          break;
+        case 'nova': // Pink — expanding halo shockwaves
+          if (s.attackTimer % Math.floor(75 * rate) === 0) {
+            const count = 10 + phase * 2;
+            fireCircle(ox, oy, count, 2 + phase * 0.2, s.color, s.angle);
+          }
+          break;
+        case 'supernova': { // Orange — delayed explosive stars
+          if (s.attackTimer % Math.floor(85 * rate) === 0) {
+            const a = angleToward({ x: ox, y: oy }, player);
+            enemyBullets.push({ x: ox, y: oy, vx: Math.cos(a) * 1.8, vy: Math.sin(a) * 1.8, size: 7, color: s.color, type: 'round',
+              artilleryTimer: 50 + Math.floor(Math.random() * 20), artilleryColor: s.color });
+          }
+          break;
+        }
+        case 'eclipse': // Green — dark homing void orbs
+          if (s.attackTimer % Math.floor(65 * rate) === 0) {
+            const a = angleToward({ x: ox, y: oy }, player);
+            enemyBullets.push({ x: ox, y: oy, vx: Math.cos(a) * 1.5, vy: Math.sin(a) * 1.5, size: 5, color: s.color, type: 'round', homing: 0.02, homingDuration: 120 });
+          }
+          break;
+      }
+    }
+  }
+
+  // --- Core attacks — escalate with fewer shields ---
+  const coreRate = sa >= 3 ? 90 : sa === 2 ? 70 : sa === 1 ? 55 : 40;
+  if (b.shootTimer % Math.floor(coreRate * rate) === 0) {
+    const count = 6 + phase * 2 + (4 - sa) * 2;
+    const aimA = angleToward(b, player);
+    for (let i = 0; i < count; i++) {
+      const a = aimA + (i - (count - 1) / 2) * 0.08;
+      enemyBullets.push({ x: b.x, y: b.y, vx: Math.cos(a) * (2.8 + i * 0.15), vy: Math.sin(a) * (2.8 + i * 0.15), size: 4, color: '#9966ff', type: 'round' });
+    }
+  }
+
+  // --- Phase 1+: slow rotating spiral arms from core ---
+  if (phase >= 1 && b.shootTimer % Math.floor(10 * rate) === 0) {
+    const arms = 3 + phase;
+    for (let i = 0; i < arms; i++) {
+      const a = (i / arms) * Math.PI * 2 + b.orbAngle * 2;
+      enemyBullets.push({ x: b.x, y: b.y, vx: Math.cos(a) * 1.8, vy: Math.sin(a) * 1.8, size: 3, color: '#bb88ff', type: 'round' });
+    }
+  }
+
+  // --- Singularity mode: "Event Horizon Symphony" ---
+  if (b.singularityActive) {
+    // Expanding circular wave every 120 frames
+    if (b.shootTimer % Math.floor(120 * rate) === 0) {
+      fireCircle(b.x, b.y, 20, 1.6, '#ff88ff', globalTime * 0.03);
+    }
+    // Rapid aimed bursts layered over rotation
+    if (b.shootTimer % Math.floor(25 * rate) === 0) {
+      fireAimed(b.x, b.y, 3.5, '#ffaaff', 5);
+      fireAimed(b.x, b.y, 3.0, '#aa66ff', 4);
+    }
+    // Spiral compression inward (slow converging bullets from edges)
+    if (b.shootTimer % Math.floor(60 * rate) === 0) {
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + globalTime * 0.02;
+        const spawnR = 250;
+        const sx = b.x + Math.cos(a) * spawnR;
+        const sy = b.y + Math.sin(a) * spawnR;
+        const ia = Math.atan2(b.y - sy, b.x - sx) + 0.3;
+        enemyBullets.push({ x: sx, y: sy, vx: Math.cos(ia) * 1.2, vy: Math.sin(ia) * 1.2, size: 5, color: '#cc66ff', type: 'round', arcCurve: 0.015 });
+      }
+    }
   }
 }
 
@@ -5276,6 +5656,226 @@ function drawMinibossExtras(b, drawW, drawH) {
       ctx.globalCompositeOperation = 'source-over';
       break;
     }
+    case 9: { // Astral Warden: orbital rings + celestial shields + gravity wells + singularity
+      const sa9 = b.shieldsAlive;
+
+      // --- Draw gravity wells (world space) ---
+      ctx.save();
+      ctx.translate(-b.x, -b.y);
+      for (const gw of b.gravityWells) {
+        const gwFrac = gw.timer / gw.maxTimer;
+        const gwPulse = 0.3 + Math.sin(t * 0.1 + gw.x * 0.05) * 0.15;
+        ctx.globalCompositeOperation = 'lighter';
+        // Dark vortex center
+        const gwGrad = ctx.createRadialGradient(gw.x, gw.y, 0, gw.x, gw.y, 30);
+        gwGrad.addColorStop(0, `rgba(20, 0, 40, ${gwFrac * 0.6})`);
+        gwGrad.addColorStop(0.4, gw.color + Math.floor(gwFrac * gwPulse * 0.4 * 255).toString(16).padStart(2, '0'));
+        gwGrad.addColorStop(1, gw.color + '00');
+        ctx.fillStyle = gwGrad;
+        ctx.beginPath(); ctx.arc(gw.x, gw.y, 30, 0, Math.PI * 2); ctx.fill();
+        // Spinning accretion ring
+        ctx.strokeStyle = gw.color + Math.floor(gwFrac * 0.5 * 255).toString(16).padStart(2, '0');
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(gw.x, gw.y, 25 + (1 - gwFrac) * 8, t * 0.06, t * 0.06 + Math.PI * 1.5);
+        ctx.stroke();
+        // Inner ring
+        ctx.strokeStyle = gw.color + Math.floor(gwFrac * 0.3 * 255).toString(16).padStart(2, '0');
+        ctx.beginPath();
+        ctx.arc(gw.x, gw.y, 15, t * -0.08, t * -0.08 + Math.PI);
+        ctx.stroke();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      ctx.restore();
+
+      // --- Vulnerability telegraph: pulsing orbital rings ---
+      if (b.vulnTelegraph > 0) {
+        ctx.globalCompositeOperation = 'lighter';
+        const telFrac = 1 - b.vulnTelegraph / 30;
+        const telPulse = Math.sin(b.vulnTelegraph * 0.6) * 0.4 + 0.6;
+        ctx.strokeStyle = `rgba(200, 180, 255, ${telPulse * telFrac * 0.6})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, 30 + telFrac * 30, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 0, 20 + telFrac * 50, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // --- Vulnerability window: glowing core ---
+      if (b.vulnerabilityActive) {
+        ctx.globalCompositeOperation = 'lighter';
+        const vPulse = 0.6 + Math.sin(t * 0.25) * 0.3;
+        const vGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 50);
+        vGrad.addColorStop(0, `rgba(220, 180, 255, ${vPulse * 0.6})`);
+        vGrad.addColorStop(0.4, `rgba(153, 102, 255, ${vPulse * 0.4})`);
+        vGrad.addColorStop(1, 'rgba(153, 102, 255, 0)');
+        ctx.fillStyle = vGrad;
+        ctx.beginPath(); ctx.arc(0, 0, 50, 0, Math.PI * 2); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // --- Singularity mode: collapsed star visuals ---
+      if (b.singularityActive) {
+        ctx.globalCompositeOperation = 'lighter';
+        const sPulse = 0.6 + Math.sin(t * 0.15) * 0.3;
+        // Intense core glow
+        const sGrad = ctx.createRadialGradient(0, 0, 5, 0, 0, 45);
+        sGrad.addColorStop(0, `rgba(255, 200, 255, ${sPulse})`);
+        sGrad.addColorStop(0.3, `rgba(200, 100, 255, ${sPulse * 0.7})`);
+        sGrad.addColorStop(0.6, `rgba(153, 60, 255, ${sPulse * 0.3})`);
+        sGrad.addColorStop(1, 'rgba(100, 30, 200, 0)');
+        ctx.fillStyle = sGrad;
+        ctx.beginPath(); ctx.arc(0, 0, 45, 0, Math.PI * 2); ctx.fill();
+        // Energy crackles
+        for (let c = 0; c < 5; c++) {
+          const ca = t * 0.06 + c * 1.25;
+          const cr = 12 + Math.sin(t * 0.15 + c) * 8;
+          ctx.fillStyle = `rgba(255, 220, 255, ${0.3 + Math.random() * 0.3})`;
+          ctx.beginPath(); ctx.arc(Math.cos(ca) * cr, Math.sin(ca) * cr, 1.5 + Math.random() * 2, 0, Math.PI * 2); ctx.fill();
+        }
+        // Distortion rings
+        for (let r = 0; r < 3; r++) {
+          const ringR = 30 + r * 18 + Math.sin(t * 0.03 + r * 2) * 5;
+          ctx.strokeStyle = `rgba(180, 120, 255, ${(0.15 - r * 0.04) * sPulse})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(0, 0, ringR, t * (0.02 + r * 0.01), t * (0.02 + r * 0.01) + Math.PI * 1.2 + r * 0.5);
+          ctx.stroke();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // --- Compute shield positions ---
+      const shieldPos9 = [];
+      for (let i = 0; i < b.orbCount; i++) {
+        const s = b.shields[i];
+        if (s.independent) {
+          shieldPos9.push({ x: s.indX - b.x, y: s.indY - b.y, alive: s.alive, wx: s.indX, wy: s.indY });
+        } else {
+          shieldPos9.push({ x: Math.cos(s.angle) * s.dist, y: Math.sin(s.angle) * s.dist, alive: s.alive, wx: b.x + Math.cos(s.angle) * s.dist, wy: b.y + Math.sin(s.angle) * s.dist });
+        }
+      }
+
+      // --- Golden orbital ring (constellation grid) ---
+      if (!b.intermissionActive && !b.singularityActive && sa9 >= 2) {
+        const canLink9 = !b.vulnerabilityActive && b.vulnTelegraph <= 0 && b.formationTransition <= 0;
+        if (canLink9) {
+          ctx.globalCompositeOperation = 'lighter';
+          for (let i = 0; i < b.orbCount; i++) {
+            const j = (i + 1) % b.orbCount;
+            if (!b.shields[i].alive || !b.shields[j].alive) continue;
+            const p1 = shieldPos9[i], p2 = shieldPos9[j];
+            const linkPulse = 0.4 + Math.sin(t * 0.1 + i * 1.2) * 0.2;
+            // Wide golden glow
+            ctx.strokeStyle = `rgba(200, 170, 100, ${linkPulse * 0.2})`;
+            ctx.lineWidth = 8;
+            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+            // Core beam (golden)
+            ctx.strokeStyle = `rgba(255, 220, 150, ${linkPulse * 0.5})`;
+            ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+            // Bright center
+            ctx.strokeStyle = `rgba(255, 255, 220, ${linkPulse * 0.3})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+          }
+          ctx.globalCompositeOperation = 'source-over';
+        }
+      }
+
+      // --- Draw shield orbs (celestial styled) ---
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < b.orbCount; i++) {
+        const s = b.shields[i];
+        const ox = shieldPos9[i].x, oy = shieldPos9[i].y;
+        if (s.alive) {
+          // Energy tether from core to shield
+          if (!s.independent) {
+            const beamAlpha = 0.25 + Math.sin(t * 0.1 + i * 1.5) * 0.12;
+            ctx.strokeStyle = s.color + Math.floor(beamAlpha * 255).toString(16).padStart(2, '0');
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(ox, oy); ctx.stroke();
+          }
+          // Shield arc — protective barrier
+          if (!s.independent) {
+            const arcR = s.dist + 8;
+            const arcSpan = Math.PI / 4;
+            ctx.strokeStyle = s.color + Math.floor((0.4 + Math.sin(t * 0.08 + i) * 0.2) * 255).toString(16).padStart(2, '0');
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(0, 0, arcR, s.angle - arcSpan / 2, s.angle + arcSpan / 2);
+            ctx.stroke();
+          }
+          // Orb glow — typed color
+          const hpFrac = s.hp / s.maxHp;
+          const orbR = 10 + hpFrac * 4;
+          const oGrad = ctx.createRadialGradient(ox, oy, 0, ox, oy, orbR);
+          oGrad.addColorStop(0, '#ffffff');
+          oGrad.addColorStop(0.3, hpFrac > 0.5 ? s.color : '#ff8844');
+          oGrad.addColorStop(1, hpFrac > 0.5 ? s.color + '00' : '#ff884400');
+          ctx.fillStyle = oGrad;
+          ctx.beginPath(); ctx.arc(ox, oy, orbR, 0, Math.PI * 2); ctx.fill();
+          // Shield HP pip
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.fillStyle = '#333';
+          ctx.fillRect(ox - 8, oy + orbR + 2, 16, 3);
+          ctx.fillStyle = hpFrac > 0.5 ? s.color : hpFrac > 0.25 ? '#ffaa44' : '#ff4444';
+          ctx.fillRect(ox - 8, oy + orbR + 2, 16 * hpFrac, 3);
+          ctx.globalCompositeOperation = 'lighter';
+        } else {
+          // Destroyed shield ghost
+          const ghostAlpha = 0.06 + Math.sin(t * 0.05 + i * 2) * 0.03;
+          ctx.strokeStyle = `rgba(153, 102, 255, ${ghostAlpha})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(ox, oy); ctx.stroke();
+        }
+      }
+
+      // --- Core energy pulse ---
+      const corePulse9 = Math.sin(t * 0.08) * 5 + 20;
+      const coreGrad9 = ctx.createRadialGradient(0, 0, 0, 0, 0, corePulse9);
+      coreGrad9.addColorStop(0, '#ffffff33');
+      coreGrad9.addColorStop(0.5, b.color + '22');
+      coreGrad9.addColorStop(1, '#00000000');
+      ctx.fillStyle = coreGrad9;
+      ctx.beginPath(); ctx.arc(0, 0, corePulse9, 0, Math.PI * 2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+
+      // --- Draw singularity beams (world space) ---
+      if (b.beams.length > 0) {
+        ctx.save();
+        ctx.translate(-b.x, -b.y);
+        for (const beam of b.beams) {
+          const bx = beam.x, by = beam.y;
+          const beamLen = 600;
+          const endX = bx + Math.cos(beam.angle) * beamLen;
+          const endY = by + Math.sin(beam.angle) * beamLen;
+          ctx.globalCompositeOperation = 'lighter';
+          // Wide feathered glow
+          ctx.strokeStyle = 'rgba(153, 60, 255, 0.12)';
+          ctx.lineWidth = beam.width * 2.5;
+          ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(endX, endY); ctx.stroke();
+          // Outer glow
+          ctx.strokeStyle = 'rgba(180, 120, 255, 0.35)';
+          ctx.lineWidth = beam.width;
+          ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(endX, endY); ctx.stroke();
+          // Bright core
+          ctx.strokeStyle = 'rgba(240, 220, 255, 0.9)';
+          ctx.lineWidth = beam.width * 0.35;
+          ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(endX, endY); ctx.stroke();
+          // Emitter glow
+          const emG9 = ctx.createRadialGradient(bx, by, 0, bx, by, beam.width * 1.5);
+          emG9.addColorStop(0, 'rgba(255, 255, 255, 0.6)');
+          emG9.addColorStop(1, 'rgba(153, 102, 255, 0)');
+          ctx.fillStyle = emG9;
+          ctx.beginPath(); ctx.arc(bx, by, beam.width * 1.5, 0, Math.PI * 2); ctx.fill();
+          ctx.globalCompositeOperation = 'source-over';
+        }
+        ctx.restore();
+      }
+
+      break;
+    }
   }
 }
 
@@ -5322,6 +5922,19 @@ function getMinibossHitCircles(b) {
         hc.push({ x: b.x, y: b.y + 40, r: 50, part: 'body' });
       }
       return hc;
+    }
+    case 9: { // Astral Warden: core + shields (attached or independent)
+      const wc = [{ x: b.x, y: b.y, r: 30, part: 'core' }];
+      for (let i = 0; i < b.orbCount; i++) {
+        const s = b.shields[i];
+        if (!s.alive) continue;
+        if (s.independent) {
+          wc.push({ x: s.indX, y: s.indY, r: 12, part: 'shield', shieldIdx: i });
+        } else {
+          wc.push({ x: b.x + Math.cos(s.angle) * s.dist, y: b.y + Math.sin(s.angle) * s.dist, r: 12, part: 'shield', shieldIdx: i });
+        }
+      }
+      return wc;
     }
     default: return [{ x: b.x, y: b.y, r: b.w / 2 }];
   }
@@ -6757,7 +7370,19 @@ function update() {
   // Player movement
   const focused = isFocused();
   const baseSpd = focused ? p.focusSpeed * resolvedMods.focusSpeedMult : p.speed;
-  const spd = baseSpd * resolvedMods.speedMult * dt;
+  let spdMult = resolvedMods.speedMult;
+  // Gravity well slow: reduce speed near Warden gravity wells
+  for (const boss of bosses) {
+    if (!boss.alive || boss.type !== 9) continue;
+    for (const gw of boss.gravityWells) {
+      const gwDist = Math.hypot(gw.x - p.x, gw.y - p.y);
+      if (gwDist < 60) {
+        const slowFactor = 0.5 + 0.5 * (gwDist / 60); // 50% slow at center, fades to 0% at 60px
+        spdMult *= slowFactor;
+      }
+    }
+  }
+  const spd = baseSpd * spdMult * dt;
 
   let mx = 0, my = 0;
   if (keys['arrowleft'] || keys['a']) mx -= 1;
@@ -6891,6 +7516,27 @@ function update() {
       b.vx = Math.cos(newAngle) * spd;
       b.vy = Math.sin(newAngle) * spd;
     }
+    // Arc curve: rotate velocity each frame for curving trails
+    if (b.arcCurve) {
+      const curAngle = Math.atan2(b.vy, b.vx);
+      const newAngle = curAngle + b.arcCurve;
+      const spd = Math.hypot(b.vx, b.vy);
+      b.vx = Math.cos(newAngle) * spd;
+      b.vy = Math.sin(newAngle) * spd;
+    }
+    // Gravity well influence: curve bullets passing near Warden gravity wells
+    for (const boss of bosses) {
+      if (!boss.alive || boss.type !== 9) continue;
+      for (const gw of boss.gravityWells) {
+        const gdx = gw.x - b.x, gdy = gw.y - b.y;
+        const gDist = Math.hypot(gdx, gdy);
+        if (gDist < 80 && gDist > 5) {
+          const pull = 0.15 / (gDist * 0.05);
+          b.vx += (gdx / gDist) * pull;
+          b.vy += (gdy / gDist) * pull;
+        }
+      }
+    }
   }
   enemyBullets = enemyBullets.filter(b => b.x > -30 && b.x < W + 30 && b.y > -30 && b.y < H + 30);
 
@@ -7017,6 +7663,79 @@ function update() {
 
         if (blocked) continue;
       }
+      // Astral Warden shield arc blocking + link beam blocking
+      if (boss.type === 9 && boss.shieldsAlive > 0 && !boss.intermissionActive) {
+        let blocked = false;
+        const bulletAngle = Math.atan2(b.y - boss.y, b.x - boss.x);
+
+        // Shield arc blocking — per-shield angle/dist
+        for (let si = 0; si < boss.orbCount; si++) {
+          const s = boss.shields[si];
+          if (!s.alive || s.independent) continue;
+          const distFromCore = Math.hypot(b.x - boss.x, b.y - boss.y);
+          const orbR = s.dist;
+          if (distFromCore > orbR - 18 && distFromCore < orbR + 18) {
+            let angleDiff = bulletAngle - s.angle;
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            if (Math.abs(angleDiff) < Math.PI / 8) {
+              s.hp -= b.damage;
+              s.flash = 3;
+              if (s.hp <= 0) {
+                s.alive = false; s.hp = 0;
+                const sx = boss.x + Math.cos(s.angle) * s.dist;
+                const sy = boss.y + Math.sin(s.angle) * s.dist;
+                spawnExplosion(sx, sy, s.color, false);
+                shakeTimer = 6; shakeIntensity = 3;
+                fireCircle(boss.x, boss.y, 8, 2.5, s.color, Math.random() * Math.PI * 2);
+                boss.retreatTimer = 30;
+                boss.targetX = boss.x < W / 2 ? W - 80 - Math.random() * 60 : 80 + Math.random() * 60;
+                // Spawn gravity well at death location
+                boss.gravityWells.push({ x: sx, y: sy, color: s.color, timer: 360, maxTimer: 360 });
+                // Vulnerability bonus: bullet-clear around destroyed shield
+                if (boss.vulnerabilityActive) {
+                  for (const eb of enemyBullets) {
+                    if (Math.hypot(eb.x - sx, eb.y - sy) < 100) eb.x = -999;
+                  }
+                  spawnParticles(sx, sy, '#ffffff', 12, 3, 20, 3);
+                }
+              }
+              spawnParticles(b.x, b.y, s.color, 2, 2, 8, 2);
+              b.y = -999;
+              blocked = true;
+              break;
+            }
+          }
+        }
+
+        // Link beam blocking — golden constellation grid
+        if (!blocked) {
+          const canLink = !boss.vulnerabilityActive && boss.vulnTelegraph <= 0 && boss.formationTransition <= 0;
+          if (canLink) {
+            for (let si = 0; si < boss.orbCount; si++) {
+              const sj = (si + 1) % boss.orbCount;
+              if (!boss.shields[si].alive || !boss.shields[sj].alive) continue;
+              const p1x = boss.x + Math.cos(boss.shields[si].angle) * boss.shields[si].dist;
+              const p1y = boss.y + Math.sin(boss.shields[si].angle) * boss.shields[si].dist;
+              const p2x = boss.x + Math.cos(boss.shields[sj].angle) * boss.shields[sj].dist;
+              const p2y = boss.y + Math.sin(boss.shields[sj].angle) * boss.shields[sj].dist;
+              const ldx = p2x - p1x, ldy = p2y - p1y;
+              const len2 = ldx * ldx + ldy * ldy;
+              if (len2 < 1) continue;
+              const t = Math.max(0, Math.min(1, ((b.x - p1x) * ldx + (b.y - p1y) * ldy) / len2));
+              const closestX = p1x + t * ldx, closestY = p1y + t * ldy;
+              if (Math.hypot(b.x - closestX, b.y - closestY) < 6) {
+                spawnParticles(b.x, b.y, '#ffcc88', 2, 1, 6, 1);
+                b.y = -999;
+                blocked = true;
+                break;
+              }
+            }
+          }
+        }
+
+        if (blocked) continue;
+      }
       // Multi-circle hitbox for minibosses, AABB for regular bosses
       let bossHit = false;
       let hitCircle = null;
@@ -7055,6 +7774,34 @@ function update() {
           // Core hit — 1.5x damage when 0 shields
           const coreMult = boss.shieldsAlive === 0 ? 1.5 : 1.0;
           boss.hp -= b.damage * coreMult;
+          boss.flash = 2;
+          if (boss.vulnerabilityActive) boss.vulnerabilityDmgAccum += b.damage;
+        // Astral Warden: route damage to shields or core
+        } else if (boss.type === 9 && hitCircle && hitCircle.part === 'shield') {
+          const shield = boss.shields[hitCircle.shieldIdx];
+          shield.hp -= b.damage;
+          if (shield.hp <= 0) {
+            shield.alive = false; shield.hp = 0;
+            const sx = hitCircle.x, sy = hitCircle.y;
+            spawnExplosion(sx, sy, shield.color, false);
+            shakeTimer = 6; shakeIntensity = 3;
+            fireCircle(boss.x, boss.y, 8, 2.5, shield.color, Math.random() * Math.PI * 2);
+            boss.retreatTimer = 30;
+            boss.targetX = boss.x < W / 2 ? W - 80 - Math.random() * 60 : 80 + Math.random() * 60;
+            // Spawn gravity well
+            boss.gravityWells.push({ x: sx, y: sy, color: shield.color, timer: 360, maxTimer: 360 });
+            // Vulnerability bonus: bullet-clear
+            if (boss.vulnerabilityActive) {
+              for (const eb of enemyBullets) {
+                if (Math.hypot(eb.x - sx, eb.y - sy) < 100) eb.x = -999;
+              }
+              spawnParticles(sx, sy, '#ffffff', 12, 3, 20, 3);
+            }
+          }
+          boss.flash = 2;
+        } else if (boss.type === 9 && hitCircle && hitCircle.part === 'core') {
+          const coreMult9 = boss.shieldsAlive === 0 ? 1.5 : (boss.singularityActive ? 1.8 : 1.0);
+          boss.hp -= b.damage * coreMult9;
           boss.flash = 2;
           if (boss.vulnerabilityActive) boss.vulnerabilityDmgAccum += b.damage;
         // Hydra: route damage to heads, necks (reduced), or body
@@ -7267,7 +8014,7 @@ function update() {
   // Collision: boss beams (Hydra + Sentinel overcharge) -> player
   if (p.alive && p.invincible <= 0) {
     for (const boss of bosses) {
-      if (!boss.alive || (boss.type !== 8 && boss.type !== 7)) continue;
+      if (!boss.alive || (boss.type !== 8 && boss.type !== 7 && boss.type !== 9)) continue;
       for (const beam of boss.beams) {
         const cosA = Math.cos(beam.angle), sinA = Math.sin(beam.angle);
         const dx = p.x - beam.x, dy = p.y - beam.y;
@@ -7326,6 +8073,53 @@ function update() {
           levelDamageTaken++; levelDeaths++;
           shakeTimer = 15; shakeIntensity = 6;
           spawnExplosion(p.x, p.y, '#bb55ff', true);
+          enemyBullets = [];
+          break;
+        }
+      }
+    }
+  }
+
+  // Collision: Astral Warden constellation grid (link beams) -> player
+  if (p.alive && p.invincible <= 0) {
+    for (const boss of bosses) {
+      if (!boss.alive || boss.type !== 9 || boss.shieldsAlive < 2 || boss.intermissionActive) continue;
+      const canLink = !boss.vulnerabilityActive && boss.vulnTelegraph <= 0 && boss.formationTransition <= 0;
+      if (!canLink) continue;
+      for (let si = 0; si < boss.orbCount; si++) {
+        const sj = (si + 1) % boss.orbCount;
+        if (!boss.shields[si].alive || !boss.shields[sj].alive) continue;
+        const p1x = boss.x + Math.cos(boss.shields[si].angle) * boss.shields[si].dist;
+        const p1y = boss.y + Math.sin(boss.shields[si].angle) * boss.shields[si].dist;
+        const p2x = boss.x + Math.cos(boss.shields[sj].angle) * boss.shields[sj].dist;
+        const p2y = boss.y + Math.sin(boss.shields[sj].angle) * boss.shields[sj].dist;
+        const ldx = p2x - p1x, ldy = p2y - p1y;
+        const len2 = ldx * ldx + ldy * ldy;
+        if (len2 < 1) continue;
+        const t = Math.max(0, Math.min(1, ((p.x - p1x) * ldx + (p.y - p1y) * ldy) / len2));
+        const closestX = p1x + t * ldx, closestY = p1y + t * ldy;
+        if (Math.hypot(p.x - closestX, p.y - closestY) < 5 + p.hitboxRadius) {
+          p.hp--; p.alive = false; p.deathAnim = 0;
+          levelDamageTaken++; levelDeaths++;
+          shakeTimer = 15; shakeIntensity = 8;
+          spawnExplosion(p.x, p.y, '#ffcc88', true);
+          enemyBullets = [];
+          break;
+        }
+      }
+    }
+  }
+
+  // Collision: Astral Warden gravity wells -> player (damage on contact with center)
+  if (p.alive && p.invincible <= 0) {
+    for (const boss of bosses) {
+      if (!boss.alive || boss.type !== 9) continue;
+      for (const gw of boss.gravityWells) {
+        if (Math.hypot(gw.x - p.x, gw.y - p.y) < 14 + p.hitboxRadius) {
+          p.hp--; p.alive = false; p.deathAnim = 0;
+          levelDamageTaken++; levelDeaths++;
+          shakeTimer = 15; shakeIntensity = 6;
+          spawnExplosion(p.x, p.y, gw.color, true);
           enemyBullets = [];
           break;
         }
