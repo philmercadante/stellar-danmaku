@@ -2370,17 +2370,17 @@ function createBoss(bossType) {
     case 9: return { ...base, hp: 450, maxHp: 450, name: 'ASTRAL WARDEN', color: '#9966ff', w: 55, h: 55, renderW: 140, renderH: 180, spriteKey: 'wardenSprite', isMiniboss: true, value: 8000, targetY: 100,
       wardenPhase: 'PHASE1', phaseTimer: 0,
       orbs: [
-        { p1Hp: 60, p1MaxHp: 60, p2Hp: 45, p2MaxHp: 45, type: 'comet',    name: 'COMET',    color: '#44aaff', role: 'shield', attackTimer: 0, x: 0, y: 0, angle: 0, flash: 0, ringAngle: 0 },
-        { p1Hp: 60, p1MaxHp: 60, p2Hp: 45, p2MaxHp: 45, type: 'nova',     name: 'NOVA',     color: '#ff4488', role: 'shield', attackTimer: 0, x: 0, y: 0, angle: Math.PI * 2 / 3, flash: 0, ringAngle: 1 },
-        { p1Hp: 60, p1MaxHp: 60, p2Hp: 45, p2MaxHp: 45, type: 'supernova',name: 'SUPERNOVA', color: '#ffaa22', role: 'shield', attackTimer: 0, x: 0, y: 0, angle: Math.PI * 4 / 3, flash: 0, ringAngle: 2 },
-        { p1Hp: 60, p1MaxHp: 60, p2Hp: 45, p2MaxHp: 45, type: 'eclipse',  name: 'ECLIPSE',  color: '#44ffaa', role: 'shield', attackTimer: 0, x: 0, y: 0, angle: 0, flash: 0, ringAngle: 3 },
+        { p1Hp: 60, p1MaxHp: 60, p2Hp: 45, p2MaxHp: 45, type: 'comet',    name: 'COMET',    color: '#44aaff', role: 'shield', attackTimer: 0, x: 0, y: 0, angle: 0, flash: 0, ringAngle: 0, speedMult: 1.5, beamState: 'idle', beamTimer: 0, beamTargetAngle: 0, chargeState: 'idle', chargeTimer: 0, chargeTargetX: 0, chargeTargetY: 0, cutterAngle: 0 },
+        { p1Hp: 60, p1MaxHp: 60, p2Hp: 45, p2MaxHp: 45, type: 'nova',     name: 'NOVA',     color: '#ff4488', role: 'shield', attackTimer: 0, x: 0, y: 0, angle: Math.PI * 2 / 3, flash: 0, ringAngle: 1, speedMult: 2.0, beamState: 'idle', beamTimer: 0, beamTargetAngle: 0, chargeState: 'idle', chargeTimer: 0, chargeTargetX: 0, chargeTargetY: 0, cutterAngle: 0 },
+        { p1Hp: 60, p1MaxHp: 60, p2Hp: 45, p2MaxHp: 45, type: 'supernova',name: 'SUPERNOVA', color: '#ffaa22', role: 'shield', attackTimer: 0, x: 0, y: 0, angle: Math.PI * 4 / 3, flash: 0, ringAngle: 2, speedMult: 2.5, beamState: 'idle', beamTimer: 0, beamTargetAngle: 0, chargeState: 'idle', chargeTimer: 0, chargeTargetX: 0, chargeTargetY: 0, cutterAngle: 0 },
+        { p1Hp: 60, p1MaxHp: 60, p2Hp: 45, p2MaxHp: 45, type: 'eclipse',  name: 'ECLIPSE',  color: '#44ffaa', role: 'shield', attackTimer: 0, x: 0, y: 0, angle: 0, flash: 0, ringAngle: 3, speedMult: 1.0, beamState: 'idle', beamTimer: 0, beamTargetAngle: 0, chargeState: 'idle', chargeTimer: 0, chargeTargetX: 0, chargeTargetY: 0, cutterAngle: 0 },
       ],
       orbCount: 4,
       activeOrbIdx: 3, rotationOrder: [3, 0, 1, 2], rotationIdx: 0,
       windowTimer: 0, windowActive: false, swapAnim: 0,
       attackPairIdx: 0, comboTimer: 0,
       ultimateIdx: 0, ultimateTimer: 0, ultimateActive: false, slingshotOrbs: [],
-      beams: [], orbRotation: 0, coreVulnerable: false,
+      beams: [], orbRotation: 0, coreVulnerable: false, poisonGlobs: [],
       retreatTimer: 0, enterAnim: 60,
     };
     default: return { ...base, hp: 200 + bossType * 100, maxHp: 200 + bossType * 100, name: 'BOSS', color: '#ff4444', spriteKey: 'boss1' };
@@ -3132,21 +3132,15 @@ function updateMinibossMovement(b) {
       b.phaseTimer++;
       b.orbRotation += 0.012;
 
-      // --- Enter animation ---
+      // --- Enter animation (orbs active immediately) ---
       if (b.enterAnim > 0) {
         b.enterAnim--;
         b.y = lerp(b.y, b.targetY, 0.04);
-        // Position orbs in initial formation during enter
-        for (let i = 0; i < 3; i++) {
-          const orb = b.orbs[i];
-          const a = b.orbRotation + (i * Math.PI * 2 / 3);
-          orb.x = lerp(orb.x || b.x, b.x + Math.cos(a) * 50, 0.06);
-          orb.y = lerp(orb.y || b.y, b.y + 50 + Math.sin(a) * 30, 0.06);
+        // Seed orb positions from boss center on first frames
+        for (let i = 0; i < 4; i++) {
+          if (!b.orbs[i].x) { b.orbs[i].x = b.x; b.orbs[i].y = b.y; }
         }
-        const atkOrb = b.orbs[b.activeOrbIdx];
-        atkOrb.x = lerp(atkOrb.x || b.x, W / 2, 0.04);
-        atkOrb.y = lerp(atkOrb.y || b.y, H * 0.45, 0.04);
-        break;
+        // Fall through to PHASE1 — orbs start attacking during descent
       }
 
       // --- Orb flash decay ---
@@ -3157,8 +3151,19 @@ function updateMinibossMovement(b) {
         const beam = b.beams[bi];
         beam.timer++;
         beam.angle += beam.rotSpeed || 0;
-        beam.x = b.x; beam.y = b.y;
+        // Nova beams track their orb, others track boss
+        if (beam.isNovaBeam && beam.orbIdx !== undefined && b.orbs[beam.orbIdx]) {
+          beam.x = b.orbs[beam.orbIdx].x; beam.y = b.orbs[beam.orbIdx].y;
+        } else {
+          beam.x = b.x; beam.y = b.y;
+        }
         if (beam.timer >= beam.maxTimer) b.beams.splice(bi, 1);
+      }
+
+      // --- Update poison globs ---
+      for (let gi = b.poisonGlobs.length - 1; gi >= 0; gi--) {
+        b.poisonGlobs[gi].timer--;
+        if (b.poisonGlobs[gi].timer <= 0) b.poisonGlobs.splice(gi, 1);
       }
 
       // ====== PHASE 1: Triangle Shield + Solo Attacker ======
@@ -3172,9 +3177,16 @@ function updateMinibossMovement(b) {
           b.comboTimer = 0;
           // Bullet clear on phase transition
           for (const eb of enemyBullets) eb.x = -999;
+          b.poisonGlobs = [];
+          b.beams = [];
           shakeTimer = 20; shakeIntensity = 8;
           spawnParticles(b.x, b.y, '#ffffff', 20, 3, 30, 3);
-          // Set up Phase 2 roles
+          // Set up Phase 2 roles + reset attack state
+          for (let ri = 0; ri < 4; ri++) {
+            b.orbs[ri].attackTimer = 0;
+            b.orbs[ri].beamState = 'idle'; b.orbs[ri].beamTimer = 0;
+            b.orbs[ri].chargeState = 'idle'; b.orbs[ri].chargeTimer = 0;
+          }
           b.orbs[0].role = 'attack'; b.orbs[1].role = 'attack';
           b.orbs[2].role = 'guard'; b.orbs[3].role = 'guard';
           break;
@@ -3187,9 +3199,14 @@ function updateMinibossMovement(b) {
           b.swapAnim = 30;
           const atkIdx = b.rotationOrder[b.rotationIdx];
           b.activeOrbIdx = atkIdx;
-          // Set roles
+          // Set roles + reset attack state for new attacker
           for (let i = 0; i < 4; i++) {
             b.orbs[i].role = (i === atkIdx) ? 'attack' : 'shield';
+            if (i === atkIdx) {
+              b.orbs[i].attackTimer = 0;
+              b.orbs[i].beamState = 'idle'; b.orbs[i].beamTimer = 0;
+              b.orbs[i].chargeState = 'idle'; b.orbs[i].chargeTimer = 0;
+            }
           }
         }
 
@@ -3210,8 +3227,8 @@ function updateMinibossMovement(b) {
         for (let i = 0; i < 4; i++) {
           if (b.orbs[i].role !== 'shield') continue;
           const a = b.orbRotation + (si9 * Math.PI * 2 / 3);
-          const targetX = b.x + Math.cos(a) * 50;
-          const targetY = b.y + 50 + Math.sin(a) * 30;
+          const targetX = b.x + Math.cos(a) * 65;
+          const targetY = b.y + 100 + Math.sin(a) * 30;
           b.orbs[i].x = lerp(b.orbs[i].x, targetX, 0.06);
           b.orbs[i].y = lerp(b.orbs[i].y, targetY, 0.06);
           b.orbs[i].angle = a;
@@ -3220,13 +3237,13 @@ function updateMinibossMovement(b) {
 
         // Position attacking orb — flies around mid-arena
         const atkOrb = b.orbs[b.activeOrbIdx];
-        if (atkOrb.p1Hp > 0) {
-          // Move in a lissajous pattern around mid-arena
-          const t = b.phaseTimer * 0.015;
+        if (atkOrb.p1Hp > 0 && atkOrb.chargeState !== 'charging') {
+          const sm = atkOrb.speedMult || 1.0;
+          const t = b.phaseTimer * 0.015 * sm;
           const atkTargetX = W / 2 + Math.sin(t * 1.3) * 140;
           const atkTargetY = H * 0.4 + Math.cos(t * 0.9) * 80;
-          atkOrb.x = lerp(atkOrb.x, atkTargetX, 0.04);
-          atkOrb.y = lerp(atkOrb.y, atkTargetY, 0.04);
+          atkOrb.x = lerp(atkOrb.x, atkTargetX, 0.04 * sm);
+          atkOrb.y = lerp(atkOrb.y, atkTargetY, 0.04 * sm);
         }
       }
 
@@ -3238,6 +3255,8 @@ function updateMinibossMovement(b) {
           b.wardenPhase = 'INTERMISSION';
           b.phaseTimer = 0;
           for (const eb of enemyBullets) eb.x = -999;
+          b.poisonGlobs = [];
+          b.beams = [];
           shakeTimer = 25; shakeIntensity = 10;
           spawnParticles(b.x, b.y, '#ffffff', 30, 4, 40, 4);
           break;
@@ -3282,11 +3301,13 @@ function updateMinibossMovement(b) {
         for (let ai = 0; ai < attackers.length; ai++) {
           const orb = b.orbs[attackers[ai]];
           if (orb.p2Hp <= 0) continue;
-          const t = b.phaseTimer * 0.012 + ai * Math.PI;
+          if (orb.chargeState === 'charging') continue; // Supernova charge overrides lissajous
+          const sm = orb.speedMult || 1.0;
+          const t = b.phaseTimer * 0.012 * sm + ai * Math.PI;
           const atkX = W / 2 + Math.sin(t * 1.1 + ai * 2) * 130;
           const atkY = H * 0.35 + Math.cos(t * 0.8 + ai * 1.5) * 70;
-          orb.x = lerp(orb.x, atkX, 0.04);
-          orb.y = lerp(orb.y, atkY, 0.04);
+          orb.x = lerp(orb.x, atkX, 0.04 * sm);
+          orb.y = lerp(orb.y, atkY, 0.04 * sm);
         }
       }
 
@@ -3804,56 +3825,104 @@ function bossPattern8(b) {
 }
 
 // ASTRAL WARDEN: Celestial shield attacks + core patterns + singularity finale
+// Shared signature attack for each orb type — used in both Phase 1 and Phase 2
+function wardenOrbAttack(b, orb, orbIdx) {
+  orb.attackTimer++;
+  const ox = orb.x, oy = orb.y;
+  const hpKey = b.wardenPhase === 'PHASE1' ? 'p1Hp' : 'p2Hp';
+  if (orb[hpKey] <= 0) return;
+
+  switch (orb.type) {
+    case 'eclipse': // Poison globules — stationary area denial
+      if (orb.attackTimer % 50 === 0) {
+        const baseAngle = angleToward({ x: ox, y: oy }, player);
+        for (let i = 0; i < 3; i++) {
+          const d = 60 + i * 50;
+          const gx = Math.max(15, Math.min(W - 15, ox + Math.cos(baseAngle) * d));
+          const gy = Math.max(15, Math.min(H - 15, oy + Math.sin(baseAngle) * d));
+          if (b.poisonGlobs.length >= 12) b.poisonGlobs.shift();
+          b.poisonGlobs.push({ x: gx, y: gy, timer: 360, maxTimer: 360, color: '#44ffaa' });
+          spawnParticles(gx, gy, '#44ffaa', 4, 1, 10, 2);
+        }
+      }
+      break;
+    case 'comet': // High-speed homing missiles
+      if (orb.attackTimer % 40 === 0) {
+        const a = angleToward({ x: ox, y: oy }, player);
+        for (let i = 0; i < 2; i++) {
+          const spread = (i - 0.5) * 0.3;
+          enemyBullets.push({ x: ox, y: oy, vx: Math.cos(a + spread) * 4.5, vy: Math.sin(a + spread) * 4.5,
+            size: 5, color: orb.color, type: 'round', homing: 0.06, homingDuration: 90 });
+        }
+      }
+      break;
+    case 'nova': // Beam attack — telegraph then fire
+      if (orb.beamState === 'idle' && orb.attackTimer % 90 === 0) {
+        orb.beamState = 'telegraph';
+        orb.beamTimer = 0;
+        orb.beamTargetAngle = angleToward({ x: ox, y: oy }, player);
+      }
+      if (orb.beamState === 'telegraph') {
+        orb.beamTimer++;
+        if (orb.beamTimer >= 40) {
+          orb.beamState = 'firing';
+          orb.beamTimer = 0;
+          b.beams.push({ x: ox, y: oy, angle: orb.beamTargetAngle, width: 12,
+            timer: 0, maxTimer: 30, orbIdx: orbIdx, isNovaBeam: true });
+        }
+      }
+      if (orb.beamState === 'firing') {
+        orb.beamTimer++;
+        if (orb.beamTimer >= 30) { orb.beamState = 'cooldown'; orb.beamTimer = 0; }
+      }
+      if (orb.beamState === 'cooldown') {
+        orb.beamTimer++;
+        if (orb.beamTimer >= 20) { orb.beamState = 'idle'; }
+      }
+      break;
+    case 'supernova': // Spinning cutter + charge
+      orb.cutterAngle += 0.12;
+      // Spawn rotating cutter bullets (short-lived, orbit the orb)
+      if (orb.attackTimer % 3 === 0) {
+        for (let i = 0; i < 3; i++) {
+          const ca = orb.cutterAngle + (i * Math.PI * 2 / 3);
+          enemyBullets.push({ x: ox + Math.cos(ca) * 28, y: oy + Math.sin(ca) * 28,
+            vx: 0, vy: 0, size: 5, color: orb.color, type: 'round',
+            cutterParent: orbIdx, cutterAngle: ca, cutterDist: 28, cutterLife: 4 });
+        }
+      }
+      // Charge state machine
+      if (orb.chargeState === 'idle') {
+        orb.chargeTimer++;
+        if (orb.chargeTimer >= 80) {
+          orb.chargeState = 'charging';
+          orb.chargeTimer = 0;
+          orb.chargeTargetX = player.x;
+          orb.chargeTargetY = player.y;
+        }
+      }
+      if (orb.chargeState === 'charging') {
+        orb.chargeTimer++;
+        orb.x = lerp(orb.x, orb.chargeTargetX, 0.15);
+        orb.y = lerp(orb.y, orb.chargeTargetY, 0.15);
+        if (orb.chargeTimer >= 30 || Math.hypot(orb.x - orb.chargeTargetX, orb.y - orb.chargeTargetY) < 10) {
+          orb.chargeState = 'recover'; orb.chargeTimer = 0;
+        }
+      }
+      if (orb.chargeState === 'recover') {
+        orb.chargeTimer++;
+        if (orb.chargeTimer >= 40) { orb.chargeState = 'idle'; orb.chargeTimer = 0; }
+      }
+      break;
+  }
+}
+
 function bossPattern9(b) {
-  if (b.enterAnim > 0) return;
 
   // ====== PHASE 1: Solo orb attacks ======
   if (b.wardenPhase === 'PHASE1') {
     const atkOrb = b.orbs[b.activeOrbIdx];
-    if (atkOrb.p1Hp <= 0) return; // Dead orb can't attack
-    atkOrb.attackTimer++;
-    const ox = atkOrb.x, oy = atkOrb.y;
-
-    switch (atkOrb.type) {
-      case 'comet': // Fast diagonal sweeps with arc-curving trails
-        if (atkOrb.attackTimer % 30 === 0) {
-          const a = angleToward({ x: ox, y: oy }, player);
-          for (let t = 0; t < 4; t++) {
-            const ca = a + (t - 1.5) * 0.15;
-            const spd = 2.8 - t * 0.2;
-            enemyBullets.push({ x: ox, y: oy, vx: Math.cos(ca) * spd, vy: Math.sin(ca) * spd, size: 4, color: atkOrb.color, type: 'round', arcCurve: 0.01 * (t % 2 === 0 ? 1 : -1) });
-          }
-        }
-        break;
-      case 'nova': // Expanding ring bursts (3 rings staggered)
-        if (atkOrb.attackTimer % 70 === 0) {
-          for (let ring = 0; ring < 3; ring++) {
-            setTimeout(() => {
-              if (!b.alive) return;
-              fireCircle(ox, oy, 12, 1.8 + ring * 0.3, atkOrb.color, globalTime * 0.05 + ring * 0.2);
-            }, ring * 200);
-          }
-        }
-        break;
-      case 'supernova': // Artillery bombardment
-        if (atkOrb.attackTimer % 40 === 0) {
-          for (let i = 0; i < 2; i++) {
-            const targetX = player.x + (Math.random() - 0.5) * 80;
-            const targetY = player.y + (Math.random() - 0.5) * 60;
-            const a = Math.atan2(targetY - oy, targetX - ox);
-            const spd = 1.8 + Math.random() * 0.4;
-            enemyBullets.push({ x: ox, y: oy, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, size: 7, color: atkOrb.color, type: 'round',
-              artilleryTimer: 40 + Math.floor(Math.random() * 20), artilleryColor: atkOrb.color });
-          }
-        }
-        break;
-      case 'eclipse': // Homing streams
-        if (atkOrb.attackTimer % 25 === 0) {
-          const a = angleToward({ x: ox, y: oy }, player);
-          enemyBullets.push({ x: ox, y: oy, vx: Math.cos(a) * 1.8, vy: Math.sin(a) * 1.8, size: 5, color: atkOrb.color, type: 'round', homing: 0.022, homingDuration: 120 });
-        }
-        break;
-    }
+    if (atkOrb.p1Hp > 0) wardenOrbAttack(b, atkOrb, b.activeOrbIdx);
 
     // Boss core fires slow aimed shots during Phase 1
     if (b.shootTimer % 90 === 0) {
@@ -3862,54 +3931,13 @@ function bossPattern9(b) {
     return;
   }
 
-  // ====== PHASE 2: Paired combo attacks ======
+  // ====== PHASE 2: Same signature attacks, multiple orbs ======
   if (b.wardenPhase === 'PHASE2') {
-    const attackers = [];
-    for (let i = 0; i < 4; i++) { if (b.orbs[i].role === 'attack' && b.orbs[i].p2Hp > 0) attackers.push(i); }
-    if (attackers.length === 0) return;
-
-    for (const ai of attackers) {
-      const orb = b.orbs[ai];
-      orb.attackTimer++;
-      const ox = orb.x, oy = orb.y;
-
-      // Determine combo type based on pair
-      const pairTypes = attackers.map(i => b.orbs[i].type);
-      if (pairTypes.includes('comet') && pairTypes.includes('nova')) {
-        // Aurora Cascade — Comet arcs + Nova rings along trail
-        if (orb.type === 'comet' && orb.attackTimer % 25 === 0) {
-          const a = angleToward({ x: ox, y: oy }, player);
-          for (let t = 0; t < 3; t++) {
-            const ca = a + (t - 1) * 0.12;
-            enemyBullets.push({ x: ox, y: oy, vx: Math.cos(ca) * 2.5, vy: Math.sin(ca) * 2.5, size: 4, color: orb.color, type: 'round', arcCurve: 0.008 });
-          }
-        }
-        if (orb.type === 'nova' && orb.attackTimer % 80 === 0) {
-          fireCircle(ox, oy, 10, 1.6, orb.color, globalTime * 0.04);
-        }
-      } else if (pairTypes.includes('supernova') && pairTypes.includes('eclipse')) {
-        // Dark Star — artillery + homing weave
-        if (orb.type === 'supernova' && orb.attackTimer % 45 === 0) {
-          const a = angleToward({ x: ox, y: oy }, player);
-          enemyBullets.push({ x: ox, y: oy, vx: Math.cos(a) * 1.6, vy: Math.sin(a) * 1.6, size: 7, color: orb.color, type: 'round',
-            artilleryTimer: 45, artilleryColor: orb.color });
-        }
-        if (orb.type === 'eclipse' && orb.attackTimer % 30 === 0) {
-          const a = angleToward({ x: ox, y: oy }, player);
-          enemyBullets.push({ x: ox, y: oy, vx: Math.cos(a) * 1.6, vy: Math.sin(a) * 1.6, size: 5, color: orb.color, type: 'round', homing: 0.02, homingDuration: 100 });
-        }
-      } else {
-        // Generic combo — converging X patterns or ring + artillery
-        if (orb.attackTimer % 35 === 0) {
-          const a = angleToward({ x: ox, y: oy }, player);
-          for (let t = 0; t < 3; t++) {
-            const ca = a + (t - 1) * 0.15;
-            enemyBullets.push({ x: ox, y: oy, vx: Math.cos(ca) * 2.2, vy: Math.sin(ca) * 2.2, size: 4, color: orb.color, type: 'round' });
-          }
-        }
-      }
+    for (let i = 0; i < 4; i++) {
+      const orb = b.orbs[i];
+      if (orb.role !== 'attack' || orb.p2Hp <= 0) continue;
+      wardenOrbAttack(b, orb, i);
     }
-
     // Boss core fires aimed fan during Phase 2
     if (b.shootTimer % 70 === 0) {
       const aimA = angleToward(b, player);
@@ -5897,7 +5925,53 @@ function drawMinibossExtras(b, drawW, drawH) {
       ctx.beginPath(); ctx.arc(0, 0, corePulse9, 0, Math.PI * 2); ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
 
-      // --- Draw beams (world space) — Cage + Orbital Beam ultimates ---
+      // --- Draw Nova beam telegraphs (world space) ---
+      ctx.save();
+      ctx.translate(-b.x, -b.y);
+      for (let i = 0; i < 4; i++) {
+        const orb = b.orbs[i];
+        if (orb.beamState === 'telegraph') {
+          ctx.globalAlpha = 0.25 + Math.sin(t * 0.3) * 0.1;
+          ctx.strokeStyle = orb.color;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([8, 8]);
+          ctx.beginPath();
+          ctx.moveTo(orb.x, orb.y);
+          ctx.lineTo(orb.x + Math.cos(orb.beamTargetAngle) * 500, orb.y + Math.sin(orb.beamTargetAngle) * 500);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+      ctx.globalAlpha = 1;
+      ctx.restore();
+
+      // --- Draw poison globs (world space) ---
+      if (b.poisonGlobs && b.poisonGlobs.length > 0) {
+        ctx.save();
+        ctx.translate(-b.x, -b.y);
+        for (const glob of b.poisonGlobs) {
+          const fadeAlpha = glob.timer < 60 ? glob.timer / 60 : 1;
+          const pulseScale = 1 + Math.sin(t * 0.1 + glob.x * 0.1) * 0.12;
+          const r = 13 * pulseScale;
+          ctx.globalAlpha = fadeAlpha;
+          ctx.globalCompositeOperation = 'lighter';
+          const gGrad = ctx.createRadialGradient(glob.x, glob.y, 0, glob.x, glob.y, r);
+          gGrad.addColorStop(0, 'rgba(68, 255, 170, 0.6)');
+          gGrad.addColorStop(0.5, 'rgba(34, 200, 120, 0.3)');
+          gGrad.addColorStop(1, 'rgba(20, 160, 80, 0)');
+          ctx.fillStyle = gGrad;
+          ctx.beginPath(); ctx.arc(glob.x, glob.y, r, 0, Math.PI * 2); ctx.fill();
+          // Inner bright core
+          ctx.globalAlpha = fadeAlpha * 0.5;
+          ctx.fillStyle = '#88ffcc';
+          ctx.beginPath(); ctx.arc(glob.x, glob.y, r * 0.35, 0, Math.PI * 2); ctx.fill();
+          ctx.globalCompositeOperation = 'source-over';
+        }
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+
+      // --- Draw beams (world space) — Cage + Orbital Beam + Nova beams ---
       if (b.beams.length > 0) {
         ctx.save();
         ctx.translate(-b.x, -b.y);
@@ -7577,6 +7651,19 @@ function update() {
       b.vx = Math.cos(newAngle) * spd;
       b.vy = Math.sin(newAngle) * spd;
     }
+    // Cutter orbital bullets: track parent orb and decay
+    if (b.cutterLife !== undefined) {
+      b.cutterLife--;
+      if (b.cutterLife <= 0) { b.x = -999; continue; }
+      for (const boss of bosses) {
+        if (boss.alive && boss.type === 9 && boss.orbs[b.cutterParent]) {
+          const orb = boss.orbs[b.cutterParent];
+          b.cutterAngle += 0.12;
+          b.x = orb.x + Math.cos(b.cutterAngle) * b.cutterDist;
+          b.y = orb.y + Math.sin(b.cutterAngle) * b.cutterDist;
+        }
+      }
+    }
   }
   enemyBullets = enemyBullets.filter(b => b.x > -30 && b.x < W + 30 && b.y > -30 && b.y < H + 30);
 
@@ -7783,6 +7870,17 @@ function update() {
               spawnExplosion(orb.x, orb.y, orb.color, false);
               shakeTimer = 6; shakeIntensity = 3;
               spawnParticles(orb.x, orb.y, orb.color, 8, 2, 15, 2);
+              // Immediate rotation if this was the active attacker
+              if (hitCircle.orbIdx === boss.activeOrbIdx) {
+                boss.windowActive = false;
+                boss.rotationIdx = (boss.rotationIdx + 1) % 4;
+                // Skip past dead orbs in rotation
+                for (let attempts = 0; attempts < 4; attempts++) {
+                  const nextIdx = boss.rotationOrder[boss.rotationIdx];
+                  if (boss.orbs[nextIdx].p1Hp > 0) break;
+                  boss.rotationIdx = (boss.rotationIdx + 1) % 4;
+                }
+              }
             }
           } else {
             orb.p2Hp = Math.max(0, orb.p2Hp - dmg);
@@ -8087,6 +8185,23 @@ function update() {
           levelDamageTaken++; levelDeaths++;
           shakeTimer = 15; shakeIntensity = 6;
           spawnExplosion(p.x, p.y, '#bb55ff', true);
+          enemyBullets = [];
+          break;
+        }
+      }
+    }
+  }
+
+  // Collision: Warden poison globs -> player
+  if (p.alive && p.invincible <= 0) {
+    for (const boss of bosses) {
+      if (!boss.alive || boss.type !== 9) continue;
+      for (const glob of boss.poisonGlobs) {
+        if (dist(glob, p) < 14 + p.hitboxRadius) {
+          p.hp--; p.alive = false; p.deathAnim = 0;
+          levelDamageTaken++; levelDeaths++;
+          shakeTimer = 15; shakeIntensity = 6;
+          spawnExplosion(p.x, p.y, '#44ffaa', true);
           enemyBullets = [];
           break;
         }
