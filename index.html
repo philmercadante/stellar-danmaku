@@ -3225,6 +3225,7 @@ function updateMinibossMovement(b) {
               b.orbs[i].attackTimer = 0;
               b.orbs[i].beamState = 'idle'; b.orbs[i].beamTimer = 0;
               b.orbs[i].chargeState = 'idle'; b.orbs[i].chargeTimer = 0;
+              b.orbs[i].eclipseTargetX = undefined; b.orbs[i].eclipseSettled = false;
             }
           }
         }
@@ -3254,15 +3255,32 @@ function updateMinibossMovement(b) {
           si9++;
         }
 
-        // Position attacking orb — flies around mid-arena
+        // Position attacking orb
         const atkOrb = b.orbs[b.activeOrbIdx];
         if (atkOrb.p1Hp > 0 && atkOrb.chargeState !== 'charging') {
-          const sm = (atkOrb.speedMult || 1.0) * 0.75;
-          const t = b.phaseTimer * 0.015 * sm;
-          const atkTargetX = W / 2 + Math.sin(t * 1.3) * 140;
-          const atkTargetY = H * 0.4 + Math.cos(t * 0.9) * 80;
-          atkOrb.x = lerp(atkOrb.x, atkTargetX, 0.04 * sm);
-          atkOrb.y = lerp(atkOrb.y, atkTargetY, 0.04 * sm);
+          if (atkOrb.type === 'eclipse') {
+            // Eclipse roams the entire screen, pauses, fires, then moves on
+            if (atkOrb.eclipseTargetX === undefined) {
+              atkOrb.eclipseTargetX = 60 + Math.random() * (W - 120);
+              atkOrb.eclipseTargetY = 80 + Math.random() * (H - 200);
+              atkOrb.eclipseSettled = false;
+              atkOrb.eclipseSettleTime = 0;
+            }
+            atkOrb.x = lerp(atkOrb.x, atkOrb.eclipseTargetX, 0.035);
+            atkOrb.y = lerp(atkOrb.y, atkOrb.eclipseTargetY, 0.035);
+            if (!atkOrb.eclipseSettled && Math.hypot(atkOrb.x - atkOrb.eclipseTargetX, atkOrb.y - atkOrb.eclipseTargetY) < 12) {
+              atkOrb.eclipseSettled = true;
+              atkOrb.eclipseSettleTime = 0;
+            }
+            if (atkOrb.eclipseSettled) atkOrb.eclipseSettleTime++;
+          } else {
+            const sm = (atkOrb.speedMult || 1.0) * 0.75;
+            const t = b.phaseTimer * 0.015 * sm;
+            const atkTargetX = W / 2 + Math.sin(t * 1.3) * 140;
+            const atkTargetY = H * 0.4 + Math.cos(t * 0.9) * 80;
+            atkOrb.x = lerp(atkOrb.x, atkTargetX, 0.04 * sm);
+            atkOrb.y = lerp(atkOrb.y, atkTargetY, 0.04 * sm);
+          }
         }
       }
 
@@ -3852,8 +3870,41 @@ function wardenOrbAttack(b, orb, orbIdx) {
   if (orb[hpKey] <= 0) return;
 
   switch (orb.type) {
-    case 'eclipse': // Poison globules — lobbed area denial
-      if (orb.attackTimer % 50 === 0) {
+    case 'eclipse': { // Poison globules — lobbed area denial
+      if (b.wardenPhase === 'PHASE1') {
+        // Phase 1: fire when settled after roaming to position
+        if (!orb.eclipseSettled || (orb.eclipseSettleTime || 0) !== 30) break;
+        const toCenter = Math.random() < 0.7;
+        const baseAngle = toCenter ?
+          angleToward({ x: ox, y: oy }, { x: W / 2, y: H / 2 }) :
+          angleToward({ x: ox, y: oy }, player);
+        const cone = Math.PI / 3; // 60° spread
+        const pDists = [70, 120, 170, 220, 270];
+        const pSizes = [12, 14, 17, 20, 23];
+        const pDurs  = [25, 35, 45, 55, 65];
+        const pArcs  = [25, 40, 55, 70, 85];
+        for (let i = 0; i < 5; i++) {
+          const ft = i / 4;
+          const spread = cone * (0.2 + ft * 0.8);
+          const angle = baseAngle + (Math.random() - 0.5) * spread;
+          const d = pDists[i] + (Math.random() - 0.5) * 20;
+          const gx = Math.max(20, Math.min(W - 20, ox + Math.cos(angle) * d));
+          const gy = Math.max(20, Math.min(H - 20, oy + Math.sin(angle) * d));
+          if (b.poisonGlobs.length >= 18) b.poisonGlobs.shift();
+          b.poisonGlobs.push({
+            x: ox, y: oy, endX: gx, endY: gy, startX: ox, startY: oy,
+            traveling: true, travelTimer: 0, travelDuration: pDurs[i], arcHeight: pArcs[i],
+            timer: 300, maxTimer: 300, color: '#44ffaa', globSize: pSizes[i]
+          });
+        }
+        spawnParticles(ox, oy, '#44ffaa', 8, 1.5, 15, 2);
+        // Pick new roaming target
+        orb.eclipseTargetX = 60 + Math.random() * (W - 120);
+        orb.eclipseTargetY = 80 + Math.random() * (H - 200);
+        orb.eclipseSettled = false;
+      } else {
+        // Phase 2: fire on timer, aimed at player
+        if (orb.attackTimer % 50 !== 0) break;
         const baseAngle = angleToward({ x: ox, y: oy }, player);
         const pDists = [80, 150, 220];
         const pDurs = [30, 45, 60];
@@ -3861,7 +3912,7 @@ function wardenOrbAttack(b, orb, orbIdx) {
         for (let i = 0; i < 3; i++) {
           const gx = Math.max(20, Math.min(W - 20, ox + Math.cos(baseAngle) * pDists[i]));
           const gy = Math.max(20, Math.min(H - 20, oy + Math.sin(baseAngle) * pDists[i]));
-          if (b.poisonGlobs.length >= 12) b.poisonGlobs.shift();
+          if (b.poisonGlobs.length >= 18) b.poisonGlobs.shift();
           b.poisonGlobs.push({
             x: ox, y: oy, endX: gx, endY: gy, startX: ox, startY: oy,
             traveling: true, travelTimer: 0, travelDuration: pDurs[i], arcHeight: pArcs[i],
@@ -3871,6 +3922,7 @@ function wardenOrbAttack(b, orb, orbIdx) {
         }
       }
       break;
+    }
     case 'comet': // High-speed homing missiles
       if (orb.attackTimer % 40 === 0) {
         const a = angleToward({ x: ox, y: oy }, player);
@@ -5979,14 +6031,14 @@ function drawMinibossExtras(b, drawW, drawH) {
           const pulseRate = glob.traveling ? 0.25 : 0.1;
           const pulseAmp = glob.traveling ? 0.2 : 0.12;
           const pulseScale = 1 + Math.sin(t * pulseRate + glob.x * 0.1) * pulseAmp;
-          const r = 18 * pulseScale;
+          const r = (glob.globSize || 18) * pulseScale;
           // Landing shadow during travel
           if (glob.traveling) {
             ctx.globalAlpha = 0.25;
             ctx.strokeStyle = '#44ffaa';
             ctx.lineWidth = 1.5;
             ctx.setLineDash([4, 4]);
-            ctx.beginPath(); ctx.arc(glob.endX, glob.endY, 18, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(glob.endX, glob.endY, glob.globSize || 18, 0, Math.PI * 2); ctx.stroke();
             ctx.setLineDash([]);
           }
           ctx.globalAlpha = fadeAlpha;
@@ -8233,7 +8285,7 @@ function update() {
     for (const boss of bosses) {
       if (!boss.alive || boss.type !== 9) continue;
       for (const glob of boss.poisonGlobs) {
-        if (dist(glob, p) < 18 + p.hitboxRadius) {
+        if (dist(glob, p) < (glob.globSize || 18) + p.hitboxRadius) {
           p.hp--; p.alive = false; p.deathAnim = 0;
           levelDamageTaken++; levelDeaths++;
           shakeTimer = 15; shakeIntensity = 6;
