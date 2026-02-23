@@ -208,6 +208,7 @@
   <div id="drag-zone"></div>
   <div class="touch-btn" id="btn-focus">FOCUS</div>
   <div class="touch-btn" id="btn-bomb">BOMB</div>
+  <div class="touch-btn" id="btn-input-mode" style="left:20px;bottom:100px;right:auto;width:56px;height:56px;font-size:9px;border-color:rgba(123,104,238,0.4);color:rgba(123,104,238,0.7);">STICK</div>
   <div id="auto-fire-indicator">AUTO-FIRE ON</div>
 </div>
 
@@ -269,20 +270,62 @@ document.addEventListener('touchstart', e => {
   if (gameState !== 'playing') return;
   for (const t of e.changedTouches) {
     if (touch.btnIds.has(t.identifier)) continue;
-    if (touch.dragId === null) {
-      touch.dragId = t.identifier;
-      touch.active = true;
-      touch.lastX = t.clientX;
-      touch.lastY = t.clientY;
-      touch.dx = 0;
-      touch.dy = 0;
+
+    if (mobileInputMode === 'joystick') {
+      if (joystick.touchId === null && t.clientX < window.innerWidth * 0.6) {
+        joystick.touchId = t.identifier;
+        joystick.active = true;
+        joystick.fadeTarget = 1;
+        const gx = (t.clientX - (canvas._offsetX || 0)) / (canvas._scale || 1);
+        const gy = (t.clientY - (canvas._offsetY || 0)) / (canvas._scale || 1);
+        joystick.centerX = gx;
+        joystick.centerY = gy;
+        joystick.knobX = gx;
+        joystick.knobY = gy;
+        joystick.deflection = 0;
+        joystick.angle = 0;
+        joystick._screenCX = t.clientX;
+        joystick._screenCY = t.clientY;
+      }
+    } else {
+      if (touch.dragId === null) {
+        touch.dragId = t.identifier;
+        touch.active = true;
+        touch.lastX = t.clientX;
+        touch.lastY = t.clientY;
+        touch.dx = 0;
+        touch.dy = 0;
+      }
     }
   }
 }, { passive: false });
 document.addEventListener('touchmove', e => {
   e.preventDefault();
   for (const t of e.changedTouches) {
-    if (t.identifier === touch.dragId) {
+    if (mobileInputMode === 'joystick' && t.identifier === joystick.touchId) {
+      const sdx = t.clientX - joystick._screenCX;
+      const sdy = t.clientY - joystick._screenCY;
+      const scale = canvas._scale || 1;
+      const gdx = sdx / scale;
+      const gdy = sdy / scale;
+      const rawDist = Math.hypot(gdx, gdy);
+      const maxR = joystick.maxRange;
+      const clampedDist = Math.min(rawDist, maxR);
+      const angle = Math.atan2(gdy, gdx);
+
+      joystick.knobX = joystick.centerX + Math.cos(angle) * clampedDist;
+      joystick.knobY = joystick.centerY + Math.sin(angle) * clampedDist;
+      joystick.angle = angle;
+
+      if (clampedDist < joystick.deadZone) {
+        joystick.deflection = 0;
+      } else {
+        joystick.deflection = (clampedDist - joystick.deadZone) / (maxR - joystick.deadZone);
+      }
+
+      touch.focus = joystick.deflection > 0 && joystick.deflection <= joystick.focusThreshold;
+
+    } else if (t.identifier === touch.dragId) {
       touch.dx += screenToGame(t.clientX - touch.lastX);
       touch.dy += screenToGame(t.clientY - touch.lastY);
       touch.lastX = t.clientX;
@@ -293,6 +336,13 @@ document.addEventListener('touchmove', e => {
 document.addEventListener('touchend', e => {
   e.preventDefault();
   for (const t of e.changedTouches) {
+    if (t.identifier === joystick.touchId) {
+      joystick.touchId = null;
+      joystick.active = false;
+      joystick.deflection = 0;
+      joystick.fadeTarget = 0;
+      touch.focus = false;
+    }
     if (t.identifier === touch.dragId) {
       touch.dragId = null;
       touch.active = false;
@@ -303,6 +353,13 @@ document.addEventListener('touchend', e => {
 }, { passive: false });
 document.addEventListener('touchcancel', e => {
   for (const t of e.changedTouches) {
+    if (t.identifier === joystick.touchId) {
+      joystick.touchId = null;
+      joystick.active = false;
+      joystick.deflection = 0;
+      joystick.fadeTarget = 0;
+      touch.focus = false;
+    }
     if (t.identifier === touch.dragId) {
       touch.dragId = null;
       touch.active = false;
@@ -1418,6 +1475,11 @@ function resetTouchState() {
   touch.focus = false;
   touch.bomb = false;
   touch.btnIds.clear();
+  joystick.touchId = null;
+  joystick.active = false;
+  joystick.deflection = 0;
+  joystick.alpha = 0;
+  joystick.fadeTarget = 0;
 }
 
 function isLevelUnlocked(levelId) {
@@ -1598,6 +1660,23 @@ const touch = {
   btnIds: new Set(),
 };
 
+let mobileInputMode = localStorage.getItem('stellarInputMode') || 'joystick';
+
+const joystick = {
+  active: false,
+  touchId: null,
+  centerX: 0, centerY: 0,
+  knobX: 0, knobY: 0,
+  _screenCX: 0, _screenCY: 0,
+  deflection: 0,
+  angle: 0,
+  alpha: 0,
+  fadeTarget: 0,
+  maxRange: 60,
+  deadZone: 6,
+  focusThreshold: 0.4,
+};
+
 const dragZone = document.getElementById('drag-zone');
 const btnFocus = document.getElementById('btn-focus');
 const btnBomb = document.getElementById('btn-bomb');
@@ -1645,6 +1724,28 @@ btnBomb.addEventListener('touchcancel', e => {
   for (const t of e.changedTouches) touch.btnIds.delete(t.identifier);
   touch.bomb = false;
   btnBomb.classList.remove('pressed');
+}, { passive: true });
+
+const btnInputMode = document.getElementById('btn-input-mode');
+function applyInputMode() {
+  btnInputMode.textContent = mobileInputMode === 'joystick' ? 'STICK' : 'DRAG';
+  btnFocus.style.display = mobileInputMode === 'drag' ? 'flex' : 'none';
+  dragZone.style.display = mobileInputMode === 'drag' ? 'block' : 'none';
+}
+btnInputMode.addEventListener('touchstart', e => {
+  e.stopPropagation();
+  for (const t of e.changedTouches) touch.btnIds.add(t.identifier);
+  mobileInputMode = mobileInputMode === 'joystick' ? 'drag' : 'joystick';
+  localStorage.setItem('stellarInputMode', mobileInputMode);
+  resetTouchState();
+  applyInputMode();
+}, { passive: true });
+btnInputMode.addEventListener('touchend', e => {
+  e.stopPropagation();
+  for (const t of e.changedTouches) touch.btnIds.delete(t.identifier);
+}, { passive: true });
+btnInputMode.addEventListener('touchcancel', e => {
+  for (const t of e.changedTouches) touch.btnIds.delete(t.identifier);
 }, { passive: true });
 
 // ---- PLAYER ----
@@ -7609,8 +7710,12 @@ function update() {
   p.x += mx * spd;
   p.y += my * spd;
 
-  // Touch: apply accumulated 1:1 drag delta directly
-  if (touch.dx !== 0 || touch.dy !== 0) {
+  // Touch: joystick deflection or 1:1 drag delta
+  if (mobileInputMode === 'joystick' && joystick.active && joystick.deflection > 0) {
+    const moveSpeed = joystick.deflection * spd;
+    p.x += Math.cos(joystick.angle) * moveSpeed;
+    p.y += Math.sin(joystick.angle) * moveSpeed;
+  } else if (touch.dx !== 0 || touch.dy !== 0) {
     p.x += touch.dx;
     p.y += touch.dy;
     touch.dx = 0;
@@ -8519,6 +8624,86 @@ function render() {
   ctx.drawImage(bloomCanvas, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.restore();
+
+  // Virtual joystick overlay (after bloom so it stays crisp)
+  if (isMobile && mobileInputMode === 'joystick') drawJoystick();
+}
+
+function drawJoystick() {
+  if (gameState !== 'playing') return;
+
+  const fadeSpeed = 0.15;
+  joystick.alpha += (joystick.fadeTarget - joystick.alpha) * fadeSpeed;
+  if (joystick.alpha < 0.01) return;
+
+  const a = joystick.alpha;
+  const cx = joystick.centerX;
+  const cy = joystick.centerY;
+  const kx = joystick.knobX;
+  const ky = joystick.knobY;
+  const maxR = joystick.maxRange;
+  const focusR = maxR * joystick.focusThreshold;
+  const inFocus = joystick.deflection > 0 && joystick.deflection <= joystick.focusThreshold;
+
+  ctx.save();
+
+  // Outer ring fill
+  ctx.globalAlpha = a * 0.12;
+  ctx.fillStyle = '#7b68ee';
+  ctx.beginPath();
+  ctx.arc(cx, cy, maxR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Outer ring stroke
+  ctx.globalAlpha = a * 0.4;
+  ctx.strokeStyle = '#7b68ee';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, maxR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Focus threshold ring (dashed)
+  ctx.globalAlpha = a * 0.3;
+  ctx.strokeStyle = '#ff6ec7';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.arc(cx, cy, focusR, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Dead zone dot
+  ctx.globalAlpha = a * 0.2;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Knob glow
+  const knobColor = inFocus ? '#ff6ec7' : '#00ffff';
+  ctx.globalAlpha = a * 0.2;
+  ctx.fillStyle = knobColor;
+  ctx.beginPath();
+  ctx.arc(kx, ky, 20, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Knob solid
+  ctx.globalAlpha = a * 0.6;
+  ctx.fillStyle = knobColor;
+  ctx.beginPath();
+  ctx.arc(kx, ky, 14, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Knob border
+  ctx.globalAlpha = a * 0.8;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(kx, ky, 14, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 // ============================================================
@@ -8569,6 +8754,7 @@ function startGame() {
   if (isMobile) {
     touchControls.classList.add('active');
     autoFireIndicator.style.display = 'block';
+    applyInputMode();
   }
 
   // Pick ship config: campaign uses CAMPAIGN_SHIP, endless uses selected ship
