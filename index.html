@@ -208,6 +208,7 @@
   <div id="drag-zone"></div>
   <div class="touch-btn" id="btn-focus">FOCUS</div>
   <div class="touch-btn" id="btn-bomb">BOMB</div>
+  <div class="touch-btn" id="btn-input-mode" style="left:20px;bottom:100px;right:auto;width:56px;height:56px;font-size:9px;border-color:rgba(123,104,238,0.4);color:rgba(123,104,238,0.7);">STICK</div>
   <div id="auto-fire-indicator">AUTO-FIRE ON</div>
 </div>
 
@@ -269,20 +270,62 @@ document.addEventListener('touchstart', e => {
   if (gameState !== 'playing') return;
   for (const t of e.changedTouches) {
     if (touch.btnIds.has(t.identifier)) continue;
-    if (touch.dragId === null) {
-      touch.dragId = t.identifier;
-      touch.active = true;
-      touch.lastX = t.clientX;
-      touch.lastY = t.clientY;
-      touch.dx = 0;
-      touch.dy = 0;
+
+    if (mobileInputMode === 'joystick') {
+      if (joystick.touchId === null && t.clientX < window.innerWidth * 0.6) {
+        joystick.touchId = t.identifier;
+        joystick.active = true;
+        joystick.fadeTarget = 1;
+        const gx = (t.clientX - (canvas._offsetX || 0)) / (canvas._scale || 1);
+        const gy = (t.clientY - (canvas._offsetY || 0)) / (canvas._scale || 1);
+        joystick.centerX = gx;
+        joystick.centerY = gy;
+        joystick.knobX = gx;
+        joystick.knobY = gy;
+        joystick.deflection = 0;
+        joystick.angle = 0;
+        joystick._screenCX = t.clientX;
+        joystick._screenCY = t.clientY;
+      }
+    } else {
+      if (touch.dragId === null) {
+        touch.dragId = t.identifier;
+        touch.active = true;
+        touch.lastX = t.clientX;
+        touch.lastY = t.clientY;
+        touch.dx = 0;
+        touch.dy = 0;
+      }
     }
   }
 }, { passive: false });
 document.addEventListener('touchmove', e => {
   e.preventDefault();
   for (const t of e.changedTouches) {
-    if (t.identifier === touch.dragId) {
+    if (mobileInputMode === 'joystick' && t.identifier === joystick.touchId) {
+      const sdx = t.clientX - joystick._screenCX;
+      const sdy = t.clientY - joystick._screenCY;
+      const scale = canvas._scale || 1;
+      const gdx = sdx / scale;
+      const gdy = sdy / scale;
+      const rawDist = Math.hypot(gdx, gdy);
+      const maxR = joystick.maxRange;
+      const clampedDist = Math.min(rawDist, maxR);
+      const angle = Math.atan2(gdy, gdx);
+
+      joystick.knobX = joystick.centerX + Math.cos(angle) * clampedDist;
+      joystick.knobY = joystick.centerY + Math.sin(angle) * clampedDist;
+      joystick.angle = angle;
+
+      if (clampedDist < joystick.deadZone) {
+        joystick.deflection = 0;
+      } else {
+        joystick.deflection = (clampedDist - joystick.deadZone) / (maxR - joystick.deadZone);
+      }
+
+      touch.focus = joystick.deflection > 0 && joystick.deflection <= joystick.focusThreshold;
+
+    } else if (t.identifier === touch.dragId) {
       touch.dx += screenToGame(t.clientX - touch.lastX);
       touch.dy += screenToGame(t.clientY - touch.lastY);
       touch.lastX = t.clientX;
@@ -293,6 +336,13 @@ document.addEventListener('touchmove', e => {
 document.addEventListener('touchend', e => {
   e.preventDefault();
   for (const t of e.changedTouches) {
+    if (t.identifier === joystick.touchId) {
+      joystick.touchId = null;
+      joystick.active = false;
+      joystick.deflection = 0;
+      joystick.fadeTarget = 0;
+      touch.focus = false;
+    }
     if (t.identifier === touch.dragId) {
       touch.dragId = null;
       touch.active = false;
@@ -303,6 +353,13 @@ document.addEventListener('touchend', e => {
 }, { passive: false });
 document.addEventListener('touchcancel', e => {
   for (const t of e.changedTouches) {
+    if (t.identifier === joystick.touchId) {
+      joystick.touchId = null;
+      joystick.active = false;
+      joystick.deflection = 0;
+      joystick.fadeTarget = 0;
+      touch.focus = false;
+    }
     if (t.identifier === touch.dragId) {
       touch.dragId = null;
       touch.active = false;
@@ -1418,6 +1475,11 @@ function resetTouchState() {
   touch.focus = false;
   touch.bomb = false;
   touch.btnIds.clear();
+  joystick.touchId = null;
+  joystick.active = false;
+  joystick.deflection = 0;
+  joystick.alpha = 0;
+  joystick.fadeTarget = 0;
 }
 
 function isLevelUnlocked(levelId) {
@@ -1598,6 +1660,23 @@ const touch = {
   btnIds: new Set(),
 };
 
+let mobileInputMode = localStorage.getItem('stellarInputMode') || 'joystick';
+
+const joystick = {
+  active: false,
+  touchId: null,
+  centerX: 0, centerY: 0,
+  knobX: 0, knobY: 0,
+  _screenCX: 0, _screenCY: 0,
+  deflection: 0,
+  angle: 0,
+  alpha: 0,
+  fadeTarget: 0,
+  maxRange: 60,
+  deadZone: 6,
+  focusThreshold: 0.4,
+};
+
 const dragZone = document.getElementById('drag-zone');
 const btnFocus = document.getElementById('btn-focus');
 const btnBomb = document.getElementById('btn-bomb');
@@ -1645,6 +1724,28 @@ btnBomb.addEventListener('touchcancel', e => {
   for (const t of e.changedTouches) touch.btnIds.delete(t.identifier);
   touch.bomb = false;
   btnBomb.classList.remove('pressed');
+}, { passive: true });
+
+const btnInputMode = document.getElementById('btn-input-mode');
+function applyInputMode() {
+  btnInputMode.textContent = mobileInputMode === 'joystick' ? 'STICK' : 'DRAG';
+  btnFocus.style.display = mobileInputMode === 'drag' ? 'flex' : 'none';
+  dragZone.style.display = mobileInputMode === 'drag' ? 'block' : 'none';
+}
+btnInputMode.addEventListener('touchstart', e => {
+  e.stopPropagation();
+  for (const t of e.changedTouches) touch.btnIds.add(t.identifier);
+  mobileInputMode = mobileInputMode === 'joystick' ? 'drag' : 'joystick';
+  localStorage.setItem('stellarInputMode', mobileInputMode);
+  resetTouchState();
+  applyInputMode();
+}, { passive: true });
+btnInputMode.addEventListener('touchend', e => {
+  e.stopPropagation();
+  for (const t of e.changedTouches) touch.btnIds.delete(t.identifier);
+}, { passive: true });
+btnInputMode.addEventListener('touchcancel', e => {
+  for (const t of e.changedTouches) touch.btnIds.delete(t.identifier);
 }, { passive: true });
 
 // ---- PLAYER ----
@@ -3162,8 +3263,22 @@ function updateMinibossMovement(b) {
 
       // --- Update poison globs ---
       for (let gi = b.poisonGlobs.length - 1; gi >= 0; gi--) {
-        b.poisonGlobs[gi].timer--;
-        if (b.poisonGlobs[gi].timer <= 0) b.poisonGlobs.splice(gi, 1);
+        const glob = b.poisonGlobs[gi];
+        if (glob.traveling) {
+          glob.travelTimer++;
+          const tt = glob.travelTimer / glob.travelDuration;
+          glob.x = glob.startX + (glob.endX - glob.startX) * tt;
+          glob.y = glob.startY + (glob.endY - glob.startY) * tt - Math.sin(tt * Math.PI) * glob.arcHeight;
+          if (glob.travelTimer >= glob.travelDuration) {
+            glob.traveling = false;
+            glob.x = glob.endX;
+            glob.y = glob.endY;
+            spawnParticles(glob.x, glob.y, '#44ffaa', 6, 1.5, 12, 2);
+          }
+        } else {
+          glob.timer--;
+          if (glob.timer <= 0) b.poisonGlobs.splice(gi, 1);
+        }
       }
 
       // ====== PHASE 1: Triangle Shield + Solo Attacker ======
@@ -3194,6 +3309,11 @@ function updateMinibossMovement(b) {
 
         // Set up window if not active
         if (!b.windowActive) {
+          // Skip dead orbs in rotation
+          for (let skip = 0; skip < 4; skip++) {
+            if (b.orbs[b.rotationOrder[b.rotationIdx]].p1Hp > 0) break;
+            b.rotationIdx = (b.rotationIdx + 1) % 4;
+          }
           b.windowActive = true;
           b.windowTimer = 600; // 10 seconds
           b.swapAnim = 30;
@@ -3206,6 +3326,7 @@ function updateMinibossMovement(b) {
               b.orbs[i].attackTimer = 0;
               b.orbs[i].beamState = 'idle'; b.orbs[i].beamTimer = 0;
               b.orbs[i].chargeState = 'idle'; b.orbs[i].chargeTimer = 0;
+              b.orbs[i].eclipseTargetX = undefined; b.orbs[i].eclipseSettled = false;
             }
           }
         }
@@ -3229,21 +3350,38 @@ function updateMinibossMovement(b) {
           const a = b.orbRotation + (si9 * Math.PI * 2 / 3);
           const targetX = b.x + Math.cos(a) * 65;
           const targetY = b.y + 100 + Math.sin(a) * 30;
-          b.orbs[i].x = lerp(b.orbs[i].x, targetX, 0.06);
-          b.orbs[i].y = lerp(b.orbs[i].y, targetY, 0.06);
+          b.orbs[i].x = lerp(b.orbs[i].x, targetX, 0.045);
+          b.orbs[i].y = lerp(b.orbs[i].y, targetY, 0.045);
           b.orbs[i].angle = a;
           si9++;
         }
 
-        // Position attacking orb — flies around mid-arena
+        // Position attacking orb
         const atkOrb = b.orbs[b.activeOrbIdx];
         if (atkOrb.p1Hp > 0 && atkOrb.chargeState !== 'charging') {
-          const sm = atkOrb.speedMult || 1.0;
-          const t = b.phaseTimer * 0.015 * sm;
-          const atkTargetX = W / 2 + Math.sin(t * 1.3) * 140;
-          const atkTargetY = H * 0.4 + Math.cos(t * 0.9) * 80;
-          atkOrb.x = lerp(atkOrb.x, atkTargetX, 0.04 * sm);
-          atkOrb.y = lerp(atkOrb.y, atkTargetY, 0.04 * sm);
+          if (atkOrb.type === 'eclipse') {
+            // Eclipse roams the entire screen, pauses, fires, then moves on
+            if (atkOrb.eclipseTargetX === undefined) {
+              atkOrb.eclipseTargetX = 60 + Math.random() * (W - 120);
+              atkOrb.eclipseTargetY = 80 + Math.random() * (H - 200);
+              atkOrb.eclipseSettled = false;
+              atkOrb.eclipseSettleTime = 0;
+            }
+            atkOrb.x = lerp(atkOrb.x, atkOrb.eclipseTargetX, 0.035);
+            atkOrb.y = lerp(atkOrb.y, atkOrb.eclipseTargetY, 0.035);
+            if (!atkOrb.eclipseSettled && Math.hypot(atkOrb.x - atkOrb.eclipseTargetX, atkOrb.y - atkOrb.eclipseTargetY) < 12) {
+              atkOrb.eclipseSettled = true;
+              atkOrb.eclipseSettleTime = 0;
+            }
+            if (atkOrb.eclipseSettled) atkOrb.eclipseSettleTime++;
+          } else {
+            const sm = (atkOrb.speedMult || 1.0) * 0.75;
+            const t = b.phaseTimer * 0.015 * sm;
+            const atkTargetX = W / 2 + Math.sin(t * 1.3) * 140;
+            const atkTargetY = H * 0.4 + Math.cos(t * 0.9) * 80;
+            atkOrb.x = lerp(atkOrb.x, atkTargetX, 0.04 * sm);
+            atkOrb.y = lerp(atkOrb.y, atkTargetY, 0.04 * sm);
+          }
         }
       }
 
@@ -3833,19 +3971,59 @@ function wardenOrbAttack(b, orb, orbIdx) {
   if (orb[hpKey] <= 0) return;
 
   switch (orb.type) {
-    case 'eclipse': // Poison globules — stationary area denial
-      if (orb.attackTimer % 50 === 0) {
+    case 'eclipse': { // Poison globules — lobbed area denial
+      if (b.wardenPhase === 'PHASE1') {
+        // Phase 1: fire when settled after roaming to position
+        if (!orb.eclipseSettled || (orb.eclipseSettleTime || 0) !== 30) break;
+        const toCenter = Math.random() < 0.7;
+        const baseAngle = toCenter ?
+          angleToward({ x: ox, y: oy }, { x: W / 2, y: H / 2 }) :
+          angleToward({ x: ox, y: oy }, player);
+        const cone = Math.PI / 3; // 60° spread
+        const pDists = [70, 120, 170, 220, 270];
+        const pSizes = [12, 14, 17, 20, 23];
+        const pDurs  = [25, 35, 45, 55, 65];
+        const pArcs  = [25, 40, 55, 70, 85];
+        for (let i = 0; i < 5; i++) {
+          const ft = i / 4;
+          const spread = cone * (0.2 + ft * 0.8);
+          const angle = baseAngle + (Math.random() - 0.5) * spread;
+          const d = pDists[i] + (Math.random() - 0.5) * 20;
+          const gx = Math.max(20, Math.min(W - 20, ox + Math.cos(angle) * d));
+          const gy = Math.max(20, Math.min(H - 20, oy + Math.sin(angle) * d));
+          if (b.poisonGlobs.length >= 18) b.poisonGlobs.shift();
+          b.poisonGlobs.push({
+            x: ox, y: oy, endX: gx, endY: gy, startX: ox, startY: oy,
+            traveling: true, travelTimer: 0, travelDuration: pDurs[i], arcHeight: pArcs[i],
+            timer: 300, maxTimer: 300, color: '#44ffaa', globSize: pSizes[i]
+          });
+        }
+        spawnParticles(ox, oy, '#44ffaa', 8, 1.5, 15, 2);
+        // Pick new roaming target
+        orb.eclipseTargetX = 60 + Math.random() * (W - 120);
+        orb.eclipseTargetY = 80 + Math.random() * (H - 200);
+        orb.eclipseSettled = false;
+      } else {
+        // Phase 2: fire on timer, aimed at player
+        if (orb.attackTimer % 50 !== 0) break;
         const baseAngle = angleToward({ x: ox, y: oy }, player);
+        const pDists = [80, 150, 220];
+        const pDurs = [30, 45, 60];
+        const pArcs = [35, 55, 75];
         for (let i = 0; i < 3; i++) {
-          const d = 60 + i * 50;
-          const gx = Math.max(15, Math.min(W - 15, ox + Math.cos(baseAngle) * d));
-          const gy = Math.max(15, Math.min(H - 15, oy + Math.sin(baseAngle) * d));
-          if (b.poisonGlobs.length >= 12) b.poisonGlobs.shift();
-          b.poisonGlobs.push({ x: gx, y: gy, timer: 360, maxTimer: 360, color: '#44ffaa' });
-          spawnParticles(gx, gy, '#44ffaa', 4, 1, 10, 2);
+          const gx = Math.max(20, Math.min(W - 20, ox + Math.cos(baseAngle) * pDists[i]));
+          const gy = Math.max(20, Math.min(H - 20, oy + Math.sin(baseAngle) * pDists[i]));
+          if (b.poisonGlobs.length >= 18) b.poisonGlobs.shift();
+          b.poisonGlobs.push({
+            x: ox, y: oy, endX: gx, endY: gy, startX: ox, startY: oy,
+            traveling: true, travelTimer: 0, travelDuration: pDurs[i], arcHeight: pArcs[i],
+            timer: 360, maxTimer: 360, color: '#44ffaa'
+          });
+          spawnParticles(ox, oy, '#44ffaa', 4, 1, 10, 2);
         }
       }
       break;
+    }
     case 'comet': // High-speed homing missiles
       if (orb.attackTimer % 40 === 0) {
         const a = angleToward({ x: ox, y: oy }, player);
@@ -3882,13 +4060,13 @@ function wardenOrbAttack(b, orb, orbIdx) {
       break;
     case 'supernova': // Spinning cutter + charge
       orb.cutterAngle += 0.12;
-      // Spawn rotating cutter bullets (short-lived, orbit the orb)
+      // Spawn rotating cutter blades (orbit the orb in a ring of death)
       if (orb.attackTimer % 3 === 0) {
         for (let i = 0; i < 3; i++) {
           const ca = orb.cutterAngle + (i * Math.PI * 2 / 3);
-          enemyBullets.push({ x: ox + Math.cos(ca) * 28, y: oy + Math.sin(ca) * 28,
-            vx: 0, vy: 0, size: 5, color: orb.color, type: 'round',
-            cutterParent: orbIdx, cutterAngle: ca, cutterDist: 28, cutterLife: 4 });
+          enemyBullets.push({ x: ox + Math.cos(ca) * 50, y: oy + Math.sin(ca) * 50,
+            vx: 0, vy: 0, size: 12, color: orb.color, type: 'round',
+            cutterParent: orbIdx, cutterAngle: ca, cutterDist: 50, cutterLife: 12 });
         }
       }
       // Charge state machine
@@ -5950,19 +6128,30 @@ function drawMinibossExtras(b, drawW, drawH) {
         ctx.save();
         ctx.translate(-b.x, -b.y);
         for (const glob of b.poisonGlobs) {
-          const fadeAlpha = glob.timer < 60 ? glob.timer / 60 : 1;
-          const pulseScale = 1 + Math.sin(t * 0.1 + glob.x * 0.1) * 0.12;
-          const r = 13 * pulseScale;
+          const fadeAlpha = (!glob.traveling && glob.timer < 60) ? glob.timer / 60 : 1;
+          const pulseRate = glob.traveling ? 0.25 : 0.1;
+          const pulseAmp = glob.traveling ? 0.2 : 0.12;
+          const pulseScale = 1 + Math.sin(t * pulseRate + glob.x * 0.1) * pulseAmp;
+          const r = (glob.globSize || 18) * pulseScale;
+          // Landing shadow during travel
+          if (glob.traveling) {
+            ctx.globalAlpha = 0.25;
+            ctx.strokeStyle = '#44ffaa';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.arc(glob.endX, glob.endY, glob.globSize || 18, 0, Math.PI * 2); ctx.stroke();
+            ctx.setLineDash([]);
+          }
           ctx.globalAlpha = fadeAlpha;
           ctx.globalCompositeOperation = 'lighter';
           const gGrad = ctx.createRadialGradient(glob.x, glob.y, 0, glob.x, glob.y, r);
-          gGrad.addColorStop(0, 'rgba(68, 255, 170, 0.6)');
-          gGrad.addColorStop(0.5, 'rgba(34, 200, 120, 0.3)');
+          gGrad.addColorStop(0, 'rgba(68, 255, 170, 0.7)');
+          gGrad.addColorStop(0.5, 'rgba(34, 200, 120, 0.35)');
           gGrad.addColorStop(1, 'rgba(20, 160, 80, 0)');
           ctx.fillStyle = gGrad;
           ctx.beginPath(); ctx.arc(glob.x, glob.y, r, 0, Math.PI * 2); ctx.fill();
           // Inner bright core
-          ctx.globalAlpha = fadeAlpha * 0.5;
+          ctx.globalAlpha = fadeAlpha * (glob.traveling ? 0.7 : 0.5);
           ctx.fillStyle = '#88ffcc';
           ctx.beginPath(); ctx.arc(glob.x, glob.y, r * 0.35, 0, Math.PI * 2); ctx.fill();
           ctx.globalCompositeOperation = 'source-over';
@@ -7521,8 +7710,12 @@ function update() {
   p.x += mx * spd;
   p.y += my * spd;
 
-  // Touch: apply accumulated 1:1 drag delta directly
-  if (touch.dx !== 0 || touch.dy !== 0) {
+  // Touch: joystick deflection or 1:1 drag delta
+  if (mobileInputMode === 'joystick' && joystick.active && joystick.deflection > 0) {
+    const moveSpeed = joystick.deflection * spd;
+    p.x += Math.cos(joystick.angle) * moveSpeed;
+    p.y += Math.sin(joystick.angle) * moveSpeed;
+  } else if (touch.dx !== 0 || touch.dy !== 0) {
     p.x += touch.dx;
     p.y += touch.dy;
     touch.dx = 0;
@@ -8197,7 +8390,7 @@ function update() {
     for (const boss of bosses) {
       if (!boss.alive || boss.type !== 9) continue;
       for (const glob of boss.poisonGlobs) {
-        if (dist(glob, p) < 14 + p.hitboxRadius) {
+        if (dist(glob, p) < (glob.globSize || 18) + p.hitboxRadius) {
           p.hp--; p.alive = false; p.deathAnim = 0;
           levelDamageTaken++; levelDeaths++;
           shakeTimer = 15; shakeIntensity = 6;
@@ -8431,6 +8624,86 @@ function render() {
   ctx.drawImage(bloomCanvas, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.restore();
+
+  // Virtual joystick overlay (after bloom so it stays crisp)
+  if (isMobile && mobileInputMode === 'joystick') drawJoystick();
+}
+
+function drawJoystick() {
+  if (gameState !== 'playing') return;
+
+  const fadeSpeed = 0.15;
+  joystick.alpha += (joystick.fadeTarget - joystick.alpha) * fadeSpeed;
+  if (joystick.alpha < 0.01) return;
+
+  const a = joystick.alpha;
+  const cx = joystick.centerX;
+  const cy = joystick.centerY;
+  const kx = joystick.knobX;
+  const ky = joystick.knobY;
+  const maxR = joystick.maxRange;
+  const focusR = maxR * joystick.focusThreshold;
+  const inFocus = joystick.deflection > 0 && joystick.deflection <= joystick.focusThreshold;
+
+  ctx.save();
+
+  // Outer ring fill
+  ctx.globalAlpha = a * 0.12;
+  ctx.fillStyle = '#7b68ee';
+  ctx.beginPath();
+  ctx.arc(cx, cy, maxR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Outer ring stroke
+  ctx.globalAlpha = a * 0.4;
+  ctx.strokeStyle = '#7b68ee';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, maxR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Focus threshold ring (dashed)
+  ctx.globalAlpha = a * 0.3;
+  ctx.strokeStyle = '#ff6ec7';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.arc(cx, cy, focusR, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Dead zone dot
+  ctx.globalAlpha = a * 0.2;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Knob glow
+  const knobColor = inFocus ? '#ff6ec7' : '#00ffff';
+  ctx.globalAlpha = a * 0.2;
+  ctx.fillStyle = knobColor;
+  ctx.beginPath();
+  ctx.arc(kx, ky, 20, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Knob solid
+  ctx.globalAlpha = a * 0.6;
+  ctx.fillStyle = knobColor;
+  ctx.beginPath();
+  ctx.arc(kx, ky, 14, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Knob border
+  ctx.globalAlpha = a * 0.8;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(kx, ky, 14, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 // ============================================================
@@ -8481,6 +8754,7 @@ function startGame() {
   if (isMobile) {
     touchControls.classList.add('active');
     autoFireIndicator.style.display = 'block';
+    applyInputMode();
   }
 
   // Pick ship config: campaign uses CAMPAIGN_SHIP, endless uses selected ship
